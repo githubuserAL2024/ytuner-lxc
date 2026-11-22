@@ -26,8 +26,9 @@ WEB_DIR = Path(os.environ.get("YTUNER_ADMIN_WEB_DIR", "/opt/ytuner/webui"))
 LOG_FILES = {
     "ytuner": Path("/var/log/ytuner.log"),
     "proxy": Path("/var/log/ytuner-stream-proxy.log"),
+    "admin": Path("/var/log/ytuner-admin.log"),
 }
-SERVICES = ["ytuner", "ytuner-stream-proxy"]
+SERVICES = ["ytuner", "ytuner-stream-proxy", "ytuner-admin"]
 ALLOW_SYSTEMCTL = os.environ.get("YTUNER_ADMIN_ALLOW_SYSTEMCTL", "1") != "0"
 HOST = os.environ.get("YTUNER_ADMIN_HOST", "0.0.0.0")
 PORT = int(os.environ.get("YTUNER_ADMIN_PORT", "8091"))
@@ -165,10 +166,60 @@ def http_check(url: str, timeout: float = 5.0) -> dict:
         return {"url": url, "ok": False, "error": str(exc), "ms": int((time.time() - t0) * 1000)}
 
 
+def parse_stations_ini(content: str) -> list[dict]:
+    groups: list[dict] = []
+    current: dict | None = None
+    for raw in content.splitlines():
+        line = raw.strip()
+        if not line or line.startswith(";") or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            current = {"name": line[1:-1].strip(), "stations": []}
+            groups.append(current)
+            continue
+        if "=" not in line:
+            continue
+        name, value = line.split("=", 1)
+        station_name = name.strip()
+        rest = value.strip()
+        url, logo = rest, ""
+        if "|" in rest:
+            url, logo = rest.split("|", 1)
+        item = {"name": station_name, "url": url.strip(), "logo": logo.strip()}
+        if current is None:
+            current = {"name": "Ungrouped", "stations": []}
+            groups.append(current)
+        current["stations"].append(item)
+    return groups
+
+
+def render_stations_ini(groups: list[dict]) -> str:
+    lines = [
+        "; Custom stations for YTuner \"My Stations\" menu.",
+        "; Format: Station Name=stream_url|optional_logo_url",
+        "",
+    ]
+    for g in groups:
+        gname = str(g.get("name", "")).strip() or "Ungrouped"
+        lines.append(f"[{gname}]")
+        for st in g.get("stations", []) or []:
+            name = str(st.get("name", "")).strip()
+            url = str(st.get("url", "")).strip()
+            logo = str(st.get("logo", "")).strip()
+            if not name or not url:
+                continue
+            if any(c in name for c in "\r\n=") or any(c in url for c in "\r\n|") or any(c in logo for c in "\r\n"):
+                raise ValueError("Invalid characters in station fields")
+            lines.append(f"{name}={url}" + (f"|{logo}" if logo else ""))
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def collect_config() -> dict:
     ytuner = read_text(YTUNER_INI)
     avr = read_text(AVR_INI)
     proxy = env_parse(read_text(PROXY_ENV))
+    stations_content = read_text(STATIONS_INI)
     return {
         "paths": {
             "install_dir": str(INSTALL_DIR),
@@ -194,6 +245,11 @@ def collect_config() -> dict:
             "timeout": proxy.get("STREAM_PROXY_TIMEOUT", "15"),
             "max_redirects": proxy.get("STREAM_PROXY_MAX_REDIRECTS", "5"),
             "log_level": proxy.get("STREAM_PROXY_LOG_LEVEL", "INFO"),
+        },
+        "stations": {
+            "path": str(STATIONS_INI),
+            "groups": parse_stations_ini(stations_content),
+            "raw": stations_content,
         },
     }
 
@@ -339,6 +395,10 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/config":
             self._send_json(200, {"ok": True, "config": collect_config()})
             return
+        if path == "/api/stations":
+            content = read_text(STATIONS_INI)
+            self._send_json(200, {"ok": True, "path": str(STATIONS_INI), "groups": parse_stations_ini(content), "raw": content})
+            return
         if path == "/api/logs":
             qs = parse_qs(parsed.query)
             name = (qs.get("name") or ["ytuner"])[0]
@@ -373,6 +433,26 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 res = save_proxy_env(payload)
                 self._send_json(200, {"ok": True, **res})
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(400, {"ok": False, "error": str(exc)})
+            return
+        if path == "/api/stations":
+            try:
+                if "raw" in payload and isinstance(payload.get("raw"), str):
+                    raw = payload["raw"]
+                    # validate by parsing and normalizing through renderer if groups can be derived? keep raw but basic check
+                    if len(raw) > 200000:
+                        raise ValueError("stations.ini too large")
+                    write_text_atomic(STATIONS_INI, raw if raw.endswith("\n") else raw + "\n")
+                    content = read_text(STATIONS_INI)
+                    self._send_json(200, {"ok": True, "saved": True, "path": str(STATIONS_INI), "groups": parse_stations_ini(content), "raw": content})
+                    return
+                groups = payload.get("groups")
+                if not isinstance(groups, list):
+                    raise ValueError("Expected 'groups' list or 'raw' string")
+                rendered = render_stations_ini(groups)
+                write_text_atomic(STATIONS_INI, rendered)
+                self._send_json(200, {"ok": True, "saved": True, "path": str(STATIONS_INI), "groups": parse_stations_ini(rendered), "raw": rendered})
             except Exception as exc:  # noqa: BLE001
                 self._send_json(400, {"ok": False, "error": str(exc)})
             return

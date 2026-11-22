@@ -44,7 +44,7 @@ YTuner stellt zwei zentrale Dienste bereit:
 Zusätzlich liefert dieses Rollout:
 
 - **HTTPS→HTTP Stream-Proxy (TCP/8090):** nimmt HTTP-Anfragen vom AVR entgegen, holt den Upstream-Stream per HTTPS (oder HTTP) und liefert ihn als HTTP an den AVR zurück. Zweck: alte AVRs ohne TLS.
-- **Admin WebUI/API (TCP/8091):** zeigt Status/Config, erlaubt Proxy-Einstellungen zu ändern, kann Dienste neu starten, Logs anzeigen und Autotests ausführen.
+- **Admin WebUI/API (TCP/8091):** zeigt Status/Config, erlaubt Proxy-Einstellungen und Senderlisten (`stations.ini`) zu pflegen, kann Dienste neu starten, Logs anzeigen und Autotests ausführen.
 
 Typischer Ablauf:
 
@@ -351,8 +351,9 @@ Die Admin-Oberfläche läuft standardmäßig auf **Port 8091** und bietet:
 - Port-/Health-Checks (80/53/8090)
 - Anzeige der wichtigsten Konfigurationswerte
 - Bearbeiten/Speichern der Stream-Proxy-Environment (`/etc/default/ytuner-stream-proxy`)
+- Senderpflege für `stations.ini` (Gruppen/Sender hinzufügen, ändern, löschen, Raw-Edit)
 - Neustart des Stream-Proxy-Dienstes
-- Log-Ansicht (`ytuner.log`, `ytuner-stream-proxy.log`)
+- Log-Ansicht (`ytuner.log`, `ytuner-stream-proxy.log`, `admin.log`)
 - Ausführen von Autotests über UI
 
 **Aufruf:**
@@ -384,9 +385,11 @@ sudo systemctl status ytuner-admin --no-pager
 | GET | `/api/health` | Healthcheck Admin-API |
 | GET | `/api/status` | Status von Services, Ports, Konfigurationsüberblick |
 | GET | `/api/config` | Aktuelle Konfigurationswerte (read-only Überblick) |
+| GET | `/api/stations` | Liest `stations.ini` als Gruppen/Sender + Raw |
+| POST | `/api/stations` | Speichert `stations.ini` (`{"groups":[...]}` oder `{"raw":"..."}`) |
 | POST | `/api/config/proxy` | Speichert Stream-Proxy-Env-Werte (`STREAM_PROXY_*`) |
 | POST | `/api/service/restart` | Neustart eines erlaubten Dienstes (`{"name":"ytuner-stream-proxy"}`) |
-| GET | `/api/logs?name=ytuner|proxy&lines=200` | Log-Tail |
+| GET | `/api/logs?name=ytuner|proxy|admin&lines=200` | Log-Tail |
 | GET/POST | `/api/tests/run` | Führt Autotests aus und liefert JSON-Ergebnis |
 
 **Autotest-CLI:**

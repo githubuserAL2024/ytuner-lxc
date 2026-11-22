@@ -110,6 +110,7 @@ If the proxy works but the AVR still fails, the station may use an unsupported c
 
 - Open: `http://<YTUNER_IP>:8091/`
 - Health: `curl -I http://<YTUNER_IP>:8091/api/health`
+- Stations: `GET/POST /api/stations` (Senderpflege für `stations.ini`)
 - Run tests via API: `curl -X POST http://<YTUNER_IP>:8091/api/tests/run`
 - Run tests via CLI: `/usr/bin/python3 /opt/ytuner/ytuner-autotest.py --json --include-admin`
 - Config: `/etc/default/ytuner-admin` (optional `YTUNER_ADMIN_TOKEN`)

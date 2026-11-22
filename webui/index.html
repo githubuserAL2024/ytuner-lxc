@@ -60,10 +60,28 @@
     </section>
 
     <section class="card wide">
+      <h2>Sender pflegen (stations.ini)</h2>
+      <p class="muted small">Sender für "My Stations" bearbeiten. Format pro Zeile in UI: Name, Stream-URL, optional Logo-URL. Speichern schreibt <code>stations.ini</code>.</p>
+      <div class="form-actions" style="margin-bottom:10px">
+        <button type="button" id="addStationBtn">Sender hinzufügen</button>
+        <button type="button" id="saveStationsBtn" class="primary">stations.ini speichern</button>
+        <button type="button" id="reloadStationsBtn">Neu laden</button>
+      </div>
+      <div id="stationsEditor" class="stations-editor"></div>
+      <details style="margin-top:10px">
+        <summary>Raw stations.ini bearbeiten</summary>
+        <textarea id="stationsRaw" class="raw-editor" spellcheck="false"></textarea>
+        <div class="form-actions"><button type="button" id="saveStationsRawBtn">Raw speichern</button></div>
+      </details>
+      <pre id="stationsSaveResult" class="result muted"></pre>
+    </section>
+
+    <section class="card wide">
       <h2>Logs</h2>
       <div class="tabs">
         <button data-log="ytuner" class="tab active">ytuner.log</button>
         <button data-log="proxy" class="tab">stream-proxy.log</button>
+        <button data-log="admin" class="tab">admin.log</button>
         <button id="refreshLogsBtn">Logs laden</button>
       </div>
       <pre id="logView" class="log">Lade...</pre>

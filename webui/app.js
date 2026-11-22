@@ -73,6 +73,79 @@ function renderTests(d){
   $('#testSummary').innerHTML = `${badge(d.ok, d.ok?'PASS':'FAIL')} ${d.passed}/${d.total} bestanden, ${d.failed} fehlgeschlagen`;
   $('#testResults').innerHTML = (d.results||[]).map(r=>`<div class="test"><div class="head"><span>${esc(r.name)}</span>${badge(r.ok,r.ok?'ok':'fail')}</div><pre>${esc(JSON.stringify(r.detail, null, 2))}</pre></div>`).join('');
 }
+let stationsModel = [];
+function normalizeStations(groups){
+  if (!Array.isArray(groups) || !groups.length) return [{name:'My Stations', stations:[]}];
+  return groups.map(g=>({name: String(g?.name||'Ungrouped'), stations: Array.isArray(g?.stations)?g.stations.map(s=>({name:String(s?.name||''), url:String(s?.url||''), logo:String(s?.logo||'')})):[]}));
+}
+function renderStationsEditor(){
+  const root = $('#stationsEditor');
+  root.innerHTML = stationsModel.map((g,gi)=>`
+    <div class="station-group" data-gi="${gi}">
+      <div class="group-head">
+        <input value="${esc(g.name)}" placeholder="Gruppenname" data-field="group-name">
+        <button type="button" data-action="add-station">+ Sender</button>
+        <button type="button" data-action="remove-group">Gruppe löschen</button>
+      </div>
+      ${(g.stations||[]).map((s,si)=>`
+        <div class="station-row" data-si="${si}">
+          <input value="${esc(s.name)}" placeholder="Sendername" data-field="name">
+          <input value="${esc(s.url)}" placeholder="Stream URL (http/https)" data-field="url">
+          <input value="${esc(s.logo)}" placeholder="Logo URL (optional)" data-field="logo">
+          <button type="button" data-action="remove-station">Entfernen</button>
+        </div>`).join('')}
+    </div>`).join('');
+}
+function collectStationsFromEditor(){
+  const groups=[];
+  document.querySelectorAll('.station-group').forEach(gEl=>{
+    const gi = Number(gEl.dataset.gi);
+    const name = gEl.querySelector('[data-field="group-name"]').value.trim() || 'Ungrouped';
+    const stations=[];
+    gEl.querySelectorAll('.station-row').forEach(rEl=>{
+      const st={name:rEl.querySelector('[data-field="name"]').value.trim(), url:rEl.querySelector('[data-field="url"]').value.trim(), logo:rEl.querySelector('[data-field="logo"]').value.trim()};
+      if (st.name || st.url || st.logo) stations.push(st);
+    });
+    groups.push({name, stations});
+  });
+  stationsModel = normalizeStations(groups);
+  return stationsModel;
+}
+async function loadStations(){
+  try {
+    const d = await api('/api/stations');
+    stationsModel = normalizeStations(d.groups||[]);
+    $('#stationsRaw').value = d.raw || '';
+    renderStationsEditor();
+    $('#stationsSaveResult').textContent = `Geladen: ${d.path}`;
+  } catch(e){ $('#stationsSaveResult').textContent = 'Fehler: '+(e.data?.error||e.message); }
+}
+async function saveStations(groups){
+  $('#stationsSaveResult').textContent = 'Speichere stations.ini...';
+  try {
+    const d = await api('/api/stations', {method:'POST', body: JSON.stringify(groups ? {groups} : {raw: $('#stationsRaw').value})});
+    stationsModel = normalizeStations(d.groups||[]);
+    $('#stationsRaw').value = d.raw || '';
+    renderStationsEditor();
+    $('#stationsSaveResult').textContent = 'Gespeichert: '+d.path;
+  } catch(e){ $('#stationsSaveResult').textContent = 'Fehler: '+JSON.stringify(e.data||{error:e.message}); }
+}
+
+$('#stationsEditor').addEventListener('click', (ev)=>{
+  const btn = ev.target.closest('button[data-action]'); if(!btn) return;
+  const gEl = btn.closest('.station-group'); const gi = Number(gEl.dataset.gi);
+  collectStationsFromEditor();
+  if (btn.dataset.action==='add-station') stationsModel[gi].stations.push({name:'',url:'',logo:''});
+  if (btn.dataset.action==='remove-group') stationsModel.splice(gi,1);
+  if (btn.dataset.action==='remove-station') { const si=Number(btn.closest('.station-row').dataset.si); stationsModel[gi].stations.splice(si,1); }
+  stationsModel = normalizeStations(stationsModel);
+  renderStationsEditor();
+});
+$('#addStationBtn').addEventListener('click', ()=>{ collectStationsFromEditor(); if(!stationsModel.length) stationsModel=[{name:'My Stations',stations:[]}]; stationsModel[0].stations.push({name:'',url:'',logo:''}); renderStationsEditor(); });
+$('#saveStationsBtn').addEventListener('click', ()=>saveStations(collectStationsFromEditor()));
+$('#saveStationsRawBtn').addEventListener('click', ()=>saveStations(null));
+$('#reloadStationsBtn').addEventListener('click', loadStations);
+
 let currentLog='ytuner';
 async function loadLogs(name=currentLog){
   currentLog=name;
@@ -90,4 +163,5 @@ $('#refreshLogsBtn').addEventListener('click', ()=>loadLogs(currentLog));
 document.querySelectorAll('.tab[data-log]').forEach(b=>b.addEventListener('click', ()=>loadLogs(b.dataset.log)));
 
 loadStatus().catch(e=>$('#statusSummary').textContent='Fehler: '+e.message);
+loadStations().catch(()=>{});
 loadLogs('ytuner').catch(()=>{});

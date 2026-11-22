@@ -10,81 +10,103 @@
   <header class="topbar">
     <div>
       <h1>YTuner Admin</h1>
-      <p class="muted">Einstellungen, Status, API-Tests und Diagnose für YTuner + Stream-Proxy</p>
+      <p class="muted">Weboberfläche für YTuner, Stream-Proxy und Diagnose</p>
     </div>
     <div class="actions">
       <button id="refreshBtn">Aktualisieren</button>
-      <button id="runTestsBtn" class="primary">Tests ausführen</button>
     </div>
   </header>
 
-  <main class="grid">
-    <section class="card">
-      <h2>Status</h2>
-      <div id="statusSummary" class="muted">Lade...</div>
-      <div id="services" class="list"></div>
-      <div id="ports" class="list"></div>
-    </section>
+  <nav class="main-tabs">
+    <button class="main-tab active" data-tab="stations">1. Radiosender pflegen</button>
+    <button class="main-tab" data-tab="admin">2. Administration / Tests</button>
+  </nav>
 
-    <section class="card">
-      <h2>Stream-Proxy Einstellungen</h2>
-      <form id="proxyForm" class="form">
-        <label>Host<input name="STREAM_PROXY_HOST" placeholder="0.0.0.0"></label>
-        <label>Port<input name="STREAM_PROXY_PORT" type="number" min="1" max="65535"></label>
-        <label>Timeout (s)<input name="STREAM_PROXY_TIMEOUT" type="number" min="1" max="120"></label>
-        <label>Max Redirects<input name="STREAM_PROXY_MAX_REDIRECTS" type="number" min="0" max="20"></label>
-        <label>Log Level
-          <select name="STREAM_PROXY_LOG_LEVEL">
-            <option>DEBUG</option><option>INFO</option><option>WARNING</option><option>ERROR</option>
-          </select>
-        </label>
-        <label>User Agent<input name="STREAM_PROXY_USER_AGENT" placeholder="Mozilla/5.0 ..."></label>
-        <div class="form-actions">
-          <button type="submit" class="primary">Speichern</button>
-          <button type="button" id="restartProxyBtn">Proxy neustarten</button>
-        </div>
-      </form>
-      <pre id="proxySaveResult" class="result muted"></pre>
-    </section>
-
-    <section class="card">
-      <h2>YTuner Konfiguration (read-only Überblick)</h2>
-      <div id="configView" class="kv"></div>
-      <p class="muted small">Dateibasierte Kernkonfigurationen werden angezeigt; Bearbeitung erfolgt weiterhin über die INI-Dateien/Env-Datei am Server.</p>
-    </section>
-
-    <section class="card wide">
-      <h2>Autotest / Diagnose</h2>
-      <div id="testSummary" class="muted">Noch keine Tests ausgeführt.</div>
-      <div id="testResults" class="test-results"></div>
-    </section>
-
-    <section class="card wide">
-      <h2>Sender pflegen (stations.ini)</h2>
-      <p class="muted small">Sender für "My Stations" bearbeiten. Format pro Zeile in UI: Name, Stream-URL, optional Logo-URL. Speichern schreibt <code>stations.ini</code>.</p>
-      <div class="form-actions" style="margin-bottom:10px">
-        <button type="button" id="addStationBtn">Sender hinzufügen</button>
-        <button type="button" id="saveStationsBtn" class="primary">stations.ini speichern</button>
-        <button type="button" id="reloadStationsBtn">Neu laden</button>
+  <main>
+    <!-- TAB 1: Radiosender pflegen -->
+    <section id="tab-stations" class="tab-panel active">
+      <div class="grid">
+        <section class="card wide">
+          <div class="section-head">
+            <div>
+              <h2>Senderliste (stations.ini)</h2>
+              <p class="muted small">Sender für "My Stations" pflegen. Nach dem Speichern liest YTuner die Datei je nach Einstellung neu ein (ggf. Service neu starten oder Auto-Refresh nutzen).</p>
+            </div>
+            <div class="actions">
+              <button type="button" id="checkAllStationsBtn">Alle prüfen</button>
+              <button type="button" id="addStationBtn">Sender hinzufügen</button>
+              <button type="button" id="reloadStationsBtn">Neu laden</button>
+              <button type="button" id="saveStationsBtn" class="primary">Speichern</button>
+            </div>
+          </div>
+          <div id="stationsEditor" class="stations-editor"></div>
+          <details style="margin-top:12px">
+            <summary>Raw stations.ini bearbeiten</summary>
+            <textarea id="stationsRaw" class="raw-editor" spellcheck="false"></textarea>
+            <div class="form-actions"><button type="button" id="saveStationsRawBtn">Raw speichern</button></div>
+          </details>
+          <pre id="stationsSaveResult" class="result muted"></pre>
+        </section>
       </div>
-      <div id="stationsEditor" class="stations-editor"></div>
-      <details style="margin-top:10px">
-        <summary>Raw stations.ini bearbeiten</summary>
-        <textarea id="stationsRaw" class="raw-editor" spellcheck="false"></textarea>
-        <div class="form-actions"><button type="button" id="saveStationsRawBtn">Raw speichern</button></div>
-      </details>
-      <pre id="stationsSaveResult" class="result muted"></pre>
     </section>
 
-    <section class="card wide">
-      <h2>Logs</h2>
-      <div class="tabs">
-        <button data-log="ytuner" class="tab active">ytuner.log</button>
-        <button data-log="proxy" class="tab">stream-proxy.log</button>
-        <button data-log="admin" class="tab">admin.log</button>
-        <button id="refreshLogsBtn">Logs laden</button>
+    <!-- TAB 2: Administration / Tests -->
+    <section id="tab-admin" class="tab-panel">
+      <div class="grid">
+        <section class="card">
+          <h2>Status</h2>
+          <div id="statusSummary" class="muted">Lade...</div>
+          <div id="services" class="list"></div>
+          <div id="ports" class="list"></div>
+        </section>
+
+        <section class="card">
+          <h2>Stream-Proxy Einstellungen</h2>
+          <form id="proxyForm" class="form">
+            <label>Host<input name="STREAM_PROXY_HOST" placeholder="0.0.0.0"></label>
+            <label>Port<input name="STREAM_PROXY_PORT" type="number" min="1" max="65535"></label>
+            <label>Timeout (s)<input name="STREAM_PROXY_TIMEOUT" type="number" min="1" max="120"></label>
+            <label>Max Redirects<input name="STREAM_PROXY_MAX_REDIRECTS" type="number" min="0" max="20"></label>
+            <label>Log Level
+              <select name="STREAM_PROXY_LOG_LEVEL">
+                <option>DEBUG</option><option>INFO</option><option>WARNING</option><option>ERROR</option>
+              </select>
+            </label>
+            <label>User Agent<input name="STREAM_PROXY_USER_AGENT" placeholder="Mozilla/5.0 ..."></label>
+            <div class="form-actions">
+              <button type="submit" class="primary">Speichern</button>
+              <button type="button" id="restartProxyBtn">Proxy neustarten</button>
+            </div>
+          </form>
+          <pre id="proxySaveResult" class="result muted"></pre>
+        </section>
+
+        <section class="card">
+          <h2>YTuner Konfiguration (read-only Überblick)</h2>
+          <div id="configView" class="kv"></div>
+          <p class="muted small">Dateibasierte Kernkonfigurationen werden angezeigt; Bearbeitung erfolgt über INI/Env-Dateien am Server.</p>
+        </section>
+
+        <section class="card wide">
+          <div class="section-head">
+            <h2>Autotest / Diagnose</h2>
+            <div class="actions"><button id="runTestsBtn" class="primary">Tests ausführen</button></div>
+          </div>
+          <div id="testSummary" class="muted">Noch keine Tests ausgeführt.</div>
+          <div id="testResults" class="test-results"></div>
+        </section>
+
+        <section class="card wide">
+          <h2>Logs</h2>
+          <div class="tabs">
+            <button data-log="ytuner" class="tab active">ytuner.log</button>
+            <button data-log="proxy" class="tab">stream-proxy.log</button>
+            <button data-log="admin" class="tab">admin.log</button>
+            <button id="refreshLogsBtn">Logs laden</button>
+          </div>
+          <pre id="logView" class="log">Lade...</pre>
+        </section>
       </div>
-      <pre id="logView" class="log">Lade...</pre>
     </section>
   </main>
 

@@ -44,7 +44,7 @@ YTuner stellt zwei zentrale Dienste bereit:
 Zusätzlich liefert dieses Rollout:
 
 - **HTTPS→HTTP Stream-Proxy (TCP/8090):** nimmt HTTP-Anfragen vom AVR entgegen, holt den Upstream-Stream per HTTPS (oder HTTP) und liefert ihn als HTTP an den AVR zurück. Zweck: alte AVRs ohne TLS.
-- **Admin WebUI/API (TCP/8091):** zeigt Status/Config, erlaubt Proxy-Einstellungen und Senderlisten (`stations.ini`) zu pflegen, kann Dienste neu starten, Logs anzeigen und Autotests ausführen.
+- **Admin WebUI/API (TCP/8091):** zweigeteilte WebUI: 1) Radiosender pflegen (inkl. Status/Erreichbarkeitsprüfung) 2) Administration der App und Tests.
 
 Typischer Ablauf:
 
@@ -347,14 +347,8 @@ sudo systemctl status ytuner-stream-proxy --no-pager
 
 Die Admin-Oberfläche läuft standardmäßig auf **Port 8091** und bietet:
 
-- Statusübersicht für `ytuner`, `ytuner-stream-proxy`, `ytuner-admin`
-- Port-/Health-Checks (80/53/8090)
-- Anzeige der wichtigsten Konfigurationswerte
-- Bearbeiten/Speichern der Stream-Proxy-Environment (`/etc/default/ytuner-stream-proxy`)
-- Senderpflege für `stations.ini` (Gruppen/Sender hinzufügen, ändern, löschen, Raw-Edit)
-- Neustart des Stream-Proxy-Dienstes
-- Log-Ansicht (`ytuner.log`, `ytuner-stream-proxy.log`, `admin.log`)
-- Ausführen von Autotests über UI
+- **Reiter 1: Radiosender pflegen** - `stations.ini` bearbeiten (Gruppen/Sender hinzufügen/ändern/löschen/Raw), Senderstatus/Erreichbarkeit pro URL prüfen (`/api/stations/check`), alle prüfen
+- **Reiter 2: Administration / Tests** - Status von Services/Ports, Config-Überblick, Stream-Proxy-Env bearbeiten, Proxy neustarten, Logs, Autotests ausführen
 
 **Aufruf:**
 
@@ -387,6 +381,7 @@ sudo systemctl status ytuner-admin --no-pager
 | GET | `/api/config` | Aktuelle Konfigurationswerte (read-only Überblick) |
 | GET | `/api/stations` | Liest `stations.ini` als Gruppen/Sender + Raw |
 | POST | `/api/stations` | Speichert `stations.ini` (`{"groups":[...]}` oder `{"raw":"..."}`) |
+| GET | `/api/stations/check?url=...` | Prüft Erreichbarkeit/Status einer Stream-URL |
 | POST | `/api/config/proxy` | Speichert Stream-Proxy-Env-Werte (`STREAM_PROXY_*`) |
 | POST | `/api/service/restart` | Neustart eines erlaubten Dienstes (`{"name":"ytuner-stream-proxy"}`) |
 | GET | `/api/logs?name=ytuner|proxy|admin&lines=200` | Log-Tail |

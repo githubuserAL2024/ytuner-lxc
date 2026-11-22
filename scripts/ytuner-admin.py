@@ -166,6 +166,45 @@ def http_check(url: str, timeout: float = 5.0) -> dict:
         return {"url": url, "ok": False, "error": str(exc), "ms": int((time.time() - t0) * 1000)}
 
 
+def check_stream_url(url: str, timeout: float = 6.0) -> dict:
+    """Check if a radio stream URL is reachable. Returns status/content-type info."""
+    from urllib.request import Request, urlopen
+    from urllib.error import HTTPError, URLError
+
+    url = (url or "").strip()
+    if not url:
+        return {"url": url, "reachable": False, "error": "empty url"}
+    # allow only http/https
+    if not re.match(r'^https?://', url, re.I):
+        return {"url": url, "reachable": False, "error": "only http/https supported"}
+
+    req = Request(url, headers={"User-Agent": "ytuner-admin/0.1", "Icy-MetaData": "1"}, method="GET")
+    t0 = time.time()
+    try:
+        with urlopen(req, timeout=timeout) as resp:
+            status = getattr(resp, "status", 200)
+            ctype = resp.headers.get("Content-Type", "")
+            body = resp.read(1024)  # read a small chunk to confirm stream flows
+            ms = int((time.time() - t0) * 1000)
+            return {
+                "url": url,
+                "reachable": 200 <= status < 400,
+                "status": status,
+                "content_type": ctype,
+                "ms": ms,
+                "bytes": len(body),
+            }
+    except HTTPError as exc:
+        ms = int((time.time() - t0) * 1000)
+        return {"url": url, "reachable": False, "status": exc.code, "error": str(exc.reason), "ms": ms}
+    except URLError as exc:
+        ms = int((time.time() - t0) * 1000)
+        return {"url": url, "reachable": False, "error": str(exc.reason), "ms": ms}
+    except Exception as exc:  # noqa: BLE001
+        ms = int((time.time() - t0) * 1000)
+        return {"url": url, "reachable": False, "error": str(exc), "ms": ms}
+
+
 def parse_stations_ini(content: str) -> list[dict]:
     groups: list[dict] = []
     current: dict | None = None
@@ -398,6 +437,18 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/stations":
             content = read_text(STATIONS_INI)
             self._send_json(200, {"ok": True, "path": str(STATIONS_INI), "groups": parse_stations_ini(content), "raw": content})
+            return
+        if path == "/api/stations/check":
+            qs = parse_qs(parsed.query)
+            url = (qs.get("url") or [""])[0].strip()
+            if not url:
+                self._send_json(400, {"ok": False, "error": "missing url"})
+                return
+            try:
+                result = check_stream_url(url)
+                self._send_json(200, {"ok": True, **result})
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(200, {"ok": True, "url": url, "reachable": False, "error": str(exc)})
             return
         if path == "/api/logs":
             qs = parse_qs(parsed.query)

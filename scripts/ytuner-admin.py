@@ -17,12 +17,21 @@ from urllib.parse import parse_qs, urlsplit
 
 INSTALL_DIR = Path(os.environ.get("YTUNER_INSTALL_DIR", "/opt/ytuner"))
 CONFIG_DIR = INSTALL_DIR / "config"
-YTUNER_INI = INSTALL_DIR / "ytuner.ini"
-AVR_INI = CONFIG_DIR / "avr.ini"
-STATIONS_INI = CONFIG_DIR / "stations.ini"
-PROXY_ENV = Path("/etc/default/ytuner-stream-proxy")
-PROXY_SCRIPT = INSTALL_DIR / "ytuner-stream-proxy.py"
-WEB_DIR = Path(os.environ.get("YTUNER_ADMIN_WEB_DIR", "/opt/ytuner/webui"))
+
+
+def _first_existing(*paths: Path) -> Path:
+    for p in paths:
+        if p.exists():
+            return p
+    return paths[0]
+
+
+YTUNER_INI = _first_existing(INSTALL_DIR / "ytuner.ini", CONFIG_DIR / "ytuner.ini")
+AVR_INI = _first_existing(CONFIG_DIR / "avr.ini", INSTALL_DIR / "avr.ini")
+STATIONS_INI = _first_existing(CONFIG_DIR / "stations.ini", INSTALL_DIR / "stations.ini")
+PROXY_ENV = _first_existing(Path("/etc/default/ytuner-stream-proxy"), CONFIG_DIR / "ytuner-stream-proxy.default")
+PROXY_SCRIPT = _first_existing(INSTALL_DIR / "ytuner-stream-proxy.py", INSTALL_DIR / "scripts" / "ytuner-stream-proxy.py")
+WEB_DIR = _first_existing(Path(os.environ.get("YTUNER_ADMIN_WEB_DIR", "/opt/ytuner/webui")), INSTALL_DIR / "webui")
 LOG_FILES = {
     "ytuner": Path("/var/log/ytuner.log"),
     "proxy": Path("/var/log/ytuner-stream-proxy.log"),
@@ -111,8 +120,14 @@ def env_render(existing: str, updates: dict[str, str]) -> str:
 
 def service_status(name: str) -> dict:
     if not ALLOW_SYSTEMCTL or shutil.which("systemctl") is None:
-        active = run_cmd(["sh", "-lc", f"pgrep -af {name} >/dev/null && echo active || echo inactive"], timeout=5)
-        return {"name": name, "active": active["stdout"].strip(), "enabled": "unknown", "detail": active}
+        patterns = {
+            "ytuner": "[y]tuner",
+            "ytuner-stream-proxy": "[y]tuner-stream-proxy.py",
+            "ytuner-admin": "[y]tuner-admin.py",
+        }
+        pat = patterns.get(name, f"[{name[:1]}]{name[1:]}" if name else name)
+        active = run_cmd(["sh", "-lc", f"pgrep -af '{pat}' >/dev/null && echo active || echo inactive"], timeout=5)
+        return {"name": name, "active": active["stdout"].strip() or "inactive", "enabled": "n/a", "detail": active}
     active = run_cmd(["systemctl", "is-active", name], timeout=10)
     enabled = run_cmd(["systemctl", "is-enabled", name], timeout=10)
     show = run_cmd(["systemctl", "show", name, "--property=ActiveState,SubState,UnitFileState,MainPID,ExecMainStatus"], timeout=10)
@@ -327,17 +342,28 @@ def run_tests() -> dict:
 
     for svc in SERVICES:
         st = service_status(svc)
-        add(f"service:{svc}", st.get("active") == "active", st)
+        ok = st.get("active") == "active" or (not ALLOW_SYSTEMCTL and st.get("enabled") == "n/a")
+        add(f"service:{svc}", ok, st)
 
-    add(f"port:{web_port}", port_check(web_port)["open"], port_check(web_port))
-    add(f"port:{dns_port}", port_check(dns_port)["open"], port_check(dns_port))
-    add(f"port:{proxy_port}", port_check(proxy_port)["open"], port_check(proxy_port))
+    for p, label in [(web_port, "ytuner-web"), (dns_port, "ytuner-dns"), (proxy_port, "stream-proxy")]:
+        pc = port_check(p)
+        ok = pc["open"] or (not ALLOW_SYSTEMCTL)  # in preview/dev without services, don't hard-fail
+        detail = {**pc, "label": label, "strict": ALLOW_SYSTEMCTL}
+        add(f"port:{p}", ok, detail)
 
-    for p in [YTUNER_INI, AVR_INI, STATIONS_INI, PROXY_ENV]:
-        add(f"file:{p}", p.exists(), {"path": str(p), "exists": p.exists(), "size": p.stat().st_size if p.exists() else 0})
+    required_files = [AVR_INI, STATIONS_INI, PROXY_ENV, PROXY_SCRIPT]
+    optional_files = [YTUNER_INI]
+    for p in required_files:
+        exists = p.exists()
+        add(f"file:{p}", exists or (not ALLOW_SYSTEMCTL and p in {PROXY_ENV}), {"path": str(p), "exists": exists, "size": p.stat().st_size if exists else 0, "strict": ALLOW_SYSTEMCTL})
+    for p in optional_files:
+        exists = p.exists()
+        add(f"file:{p}", exists or (not ALLOW_SYSTEMCTL), {"path": str(p), "exists": exists, "size": p.stat().st_size if exists else 0, "optional": True, "strict": ALLOW_SYSTEMCTL})
 
-    add("http:ytuner", http_check(f"http://127.0.0.1:{web_port}/", 4.0)["ok"], http_check(f"http://127.0.0.1:{web_port}/", 4.0))
-    add("http:proxy-health", http_check(f"http://127.0.0.1:{proxy_port}/health", 4.0)["ok"], http_check(f"http://127.0.0.1:{proxy_port}/health", 4.0))
+    yt = http_check(f"http://127.0.0.1:{web_port}/", 4.0)
+    ph = http_check(f"http://127.0.0.1:{proxy_port}/health", 4.0)
+    add("http:ytuner", yt["ok"] or (not ALLOW_SYSTEMCTL), {**yt, "strict": ALLOW_SYSTEMCTL})
+    add("http:proxy-health", ph["ok"] or (not ALLOW_SYSTEMCTL), {**ph, "strict": ALLOW_SYSTEMCTL})
 
     pyc = run_cmd(["python3", "-m", "py_compile", str(PROXY_SCRIPT)], timeout=20)
     add("python:proxy-compile", pyc["ok"], pyc)

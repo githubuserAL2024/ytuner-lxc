@@ -83,10 +83,44 @@ else
   install -m 0755 "$BIN_PATH" "$INSTALL_DIR/ytuner"
 fi
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+PROXY_SCRIPT_SOURCE="${REPO_DIR}/scripts/ytuner-stream-proxy.py"
+PROXY_SERVICE_SOURCE="${REPO_DIR}/systemd/ytuner-stream-proxy.service"
+PROXY_DEFAULT_SOURCE="${REPO_DIR}/config/ytuner-stream-proxy.default"
+if [[ -f "$PROXY_SCRIPT_SOURCE" ]]; then
+  log "Updating stream proxy script..."
+  if [[ "$DRY_RUN" == "1" ]]; then
+    printf '+ install -m 0755 %q %q\n' "$PROXY_SCRIPT_SOURCE" "$INSTALL_DIR/ytuner-stream-proxy.py"
+  else
+    install -m 0755 "$PROXY_SCRIPT_SOURCE" "$INSTALL_DIR/ytuner-stream-proxy.py"
+  fi
+fi
+if [[ -f "$PROXY_SERVICE_SOURCE" ]]; then
+  if [[ "$DRY_RUN" == "1" ]]; then
+    printf '+ install -m 0644 %q /etc/systemd/system/ytuner-stream-proxy.service\n' "$PROXY_SERVICE_SOURCE"
+  else
+    install -m 0644 "$PROXY_SERVICE_SOURCE" /etc/systemd/system/ytuner-stream-proxy.service
+  fi
+fi
+if [[ -f "$PROXY_DEFAULT_SOURCE" && ! -f /etc/default/ytuner-stream-proxy ]]; then
+  if [[ "$DRY_RUN" == "1" ]]; then
+    printf '+ install -m 0644 %q /etc/default/ytuner-stream-proxy\n' "$PROXY_DEFAULT_SOURCE"
+  else
+    install -m 0644 "$PROXY_DEFAULT_SOURCE" /etc/default/ytuner-stream-proxy
+  fi
+fi
+
 if [[ "$NO_RESTART" == "0" ]] && command -v systemctl >/dev/null 2>&1; then
+  run systemctl daemon-reload || true
   log "Restarting ytuner.service..."
   run systemctl restart ytuner.service
   run systemctl --no-pager --full status ytuner.service || true
+  if systemctl list-unit-files | grep -q '^ytuner-stream-proxy\.service'; then
+    log "Restarting ytuner-stream-proxy.service..."
+    run systemctl restart ytuner-stream-proxy.service || true
+    run systemctl --no-pager --full status ytuner-stream-proxy.service || true
+  fi
 fi
 
 log "Update complete: $VERSION"

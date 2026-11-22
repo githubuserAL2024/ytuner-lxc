@@ -24,10 +24,12 @@ Dieses Rollout stellt bereit:
 
 - **LXC-Erstellung** auf dem Proxmox-Host (`scripts/create-lxc.sh`)
 - **Automatische Installation** im Container (`scripts/install-ytuner.sh`)
+- **One-Shot-Installer** (`install.sh`) für `wget ... | bash` Installation
+- **HTTPS→HTTP Stream-Proxy** (`scripts/ytuner-stream-proxy.py`) als eigener systemd-Dienst
 - **Update-Skript** mit Binary-Backup (`scripts/update-ytuner.sh`)
 - **Backup-Skript** für Config/DB/Cache/Logs (`scripts/backup-config.sh`)
-- **systemd-Service** (`systemd/ytuner.service`)
-- **Konfigurationsvorlagen** (`config/ytuner.ini`, `config/avr.ini`, `config/stations.ini`)
+- **systemd-Services** (`systemd/ytuner.service`, `systemd/ytuner-stream-proxy.service`)
+- **Konfigurationsvorlagen** (`config/ytuner.ini`, `config/avr.ini`, `config/stations.ini`, `config/ytuner-stream-proxy.default`)
 - **AVR-/Netzwerk-Anleitung** (`docs/AVR-SETUP.md`)
 
 ## Wie YTuner funktioniert
@@ -36,6 +38,11 @@ YTuner stellt zwei zentrale Dienste bereit:
 
 - **Webservice (TCP/80):** Endpunkte, die AVRs für Stationslisten/Bookmarks/Streams erwarten.
 - **DNS-Intercept (UDP/53):** fängt vTuner-bezogene Domains ab und beantwortet sie mit der IP des YTuner-Hosts.
+
+Zusätzlich liefert dieses Rollout einen **HTTPS→HTTP Stream-Proxy**:
+
+- **Stream-Proxy (TCP/8090):** nimmt HTTP-Anfragen vom AVR entgegen, holt den Upstream-Stream per HTTPS (oder HTTP) und liefert ihn als HTTP an den AVR zurück.
+- **Zweck:** Viele alte AVRs können kein TLS/HTTPS. YTuners `Protocol=all-as-http` ändert nur das URL-Schema, stellt aber keine TLS-Verbindung her. Für echte HTTPS-only Streams ist dieser Proxy nötig.
 
 Typischer Ablauf:
 
@@ -61,10 +68,11 @@ Typischer Ablauf:
 - Debian/Ubuntu-basiertes Linux (Skripte sind für Debian LXC ausgelegt)
 - Root-Zugriff im Container (`sudo`/root)
 - Internetzugang für Paketinstallation und Download der YTuner-Binaries
+- `python3` (wird vom Installer automatisch installiert; für Stream-Proxy benötigt)
 
 ### Netzwerk / Firewall
 
-- **TCP 80** und **UDP 53** müssen vom LAN zum YTuner-Container erreichbar sein
+- **TCP 80**, **UDP 53** und **TCP 8090** müssen vom LAN zum YTuner-Container erreichbar sein
 - Falls Proxmox-Firewall oder Firewall im LXC aktiv ist: entsprechende Regeln setzen
 - Port 53 darf nicht bereits durch anderen DNS-Dienst belegt sein (`systemd-resolved`, `dnsmasq` etc.)
 
@@ -72,22 +80,25 @@ Typischer Ablauf:
 
 ```text
 .
-├── README.md                  # Diese ausführliche Anleitung
-├── install.sh                 # One-Shot Installer (wget/curl -> bash)
-├── .gitignore                 # Ignoriert Logs/Archive/temporäre Dateien
+├── README.md                         # Diese ausführliche Anleitung
+├── install.sh                        # One-Shot Installer (wget/curl -> bash)
+├── .gitignore                        # Ignoriert Logs/Archive/temporäre Dateien
 ├── config/
-│   ├── avr.ini                # AVR-Menü/Filter/Sortierung (Template)
-│   ├── stations.ini           # Beispiel für "My Stations"
-│   └── ytuner.ini             # Hauptkonfiguration für YTuner
+│   ├── avr.ini                       # AVR-Menü/Filter/Sortierung (Template)
+│   ├── stations.ini                  # Beispiel für "My Stations"
+│   ├── ytuner.ini                    # Hauptkonfiguration für YTuner
+│   └── ytuner-stream-proxy.default   # Environment-Datei für Stream-Proxy
 ├── docs/
-│   └── AVR-SETUP.md           # AVR-DNS/Netzwerk-Checkliste & Troubleshooting
+│   └── AVR-SETUP.md                  # AVR-DNS/Netzwerk-Checkliste & Troubleshooting
 ├── scripts/
-│   ├── backup-config.sh       # Backup von Config/DB/Cache/Log/Service
-│   ├── create-lxc.sh          # Proxmox-Host: LXC anlegen
-│   ├── install-ytuner.sh      # Im LXC: Installation + systemd + Verifikation
-│   └── update-ytuner.sh       # Im LXC: Binary-Update mit Backup
+│   ├── backup-config.sh              # Backup von Config/DB/Cache/Log/Service
+│   ├── create-lxc.sh                 # Proxmox-Host: LXC anlegen
+│   ├── install-ytuner.sh             # Im LXC: Installation + systemd + Verifikation
+│   ├── update-ytuner.sh              # Im LXC: Binary-Update mit Backup
+│   └── ytuner-stream-proxy.py        # HTTPS->HTTP Stream-Proxy
 └── systemd/
-    └── ytuner.service         # systemd-Unit für /opt/ytuner/ytuner
+    ├── ytuner.service                # systemd-Unit für /opt/ytuner/ytuner
+    └── ytuner-stream-proxy.service   # systemd-Unit für Stream-Proxy
 ```
 
 ## Schnellstart (One-Shot Installation)
@@ -109,10 +120,11 @@ curl -fsSL http://192.168.50.88:3000/alex/ytuner-lxc/raw/branch/main/install.sh 
 
 Das Skript installiert automatisch:
 
-- benötigte Pakete (`wget`, `unzip`, `sqlite3`, `libsqlite3-0`, `ca-certificates`, etc.)
+- benötigte Pakete (`wget`, `unzip`, `sqlite3`, `libsqlite3-0`, `python3`, `ca-certificates`, etc.)
 - die passende offizielle YTuner-Binary (architekturabhängig)
 - Default-Konfigurationsdateien unter `/opt/ytuner/` (falls nicht vorhanden)
-- die `systemd`-Unit und aktiviert/startet den Dienst
+- den HTTPS→HTTP Stream-Proxy (`/opt/ytuner/ytuner-stream-proxy.py`) inkl. systemd-Service
+- die `systemd`-Units und aktiviert/startet die Dienste
 - behandelt Port-53-Konflikte mit `systemd-resolved`
 
 Nützliche Optionen:
@@ -152,6 +164,22 @@ sudo bash scripts/install-ytuner.sh
 ### 4) AVR auf YTuner-DNS umstellen
 
 Am AVR den DNS-Server auf die **IP des YTuner-Containers** setzen. Details: [docs/AVR-SETUP.md](docs/AVR-SETUP.md).
+
+### 5) HTTPS-only Streams über Proxy nutzen
+
+Wenn ein Sender nur HTTPS anbietet und der AVR ihn nicht direkt abspielen kann, nutze den lokalen Proxy:
+
+```text
+http://<YTUNER_IP>:8090/stream?url=https://example.com/radio.mp3
+```
+
+Kurzform wird ebenfalls unterstützt:
+
+```text
+http://<YTUNER_IP>:8090/https://example.com/radio.mp3
+```
+
+Diesen Proxy-Link kannst du in `/opt/ytuner/config/stations.ini` als Stream-URL eintragen.
 
 ## Detaillierte Installation
 
@@ -222,7 +250,10 @@ Nach der Installation liegen die produktiven Dateien unter `/opt/ytuner`:
 | `/opt/ytuner/config/bookmark.xml` | Bookmarks (zur Laufzeit/je nach AVR-Nutzung) |
 | `/opt/ytuner/db/rb.db` | Radio-browser SQLite-Cache (bei DB-Cache-Typen) |
 | `/opt/ytuner/cache/` | Icon-/UUID-/Stationscache (je nach Einstellung) |
-| `/var/log/ytuner.log` | Service-Log (stdout/stderr der Unit) |
+| `/opt/ytuner/ytuner-stream-proxy.py` | HTTPS→HTTP Stream-Proxy |
+| `/etc/default/ytuner-stream-proxy` | Environment-Konfiguration für Stream-Proxy |
+| `/var/log/ytuner.log` | YTuner Service-Log |
+| `/var/log/ytuner-stream-proxy.log` | Stream-Proxy Service-Log |
 
 Die Dateien im Repo unter `config/` sind **Templates**. Sie werden beim Erstinstall kopiert; bestehende Dateien bleiben erhalten, außer `--force-config` wird gesetzt.
 
@@ -263,6 +294,40 @@ Station Name=http://stream.url/example.mp3|http://logo.url/logo.png
 - Logo-URL ist optional.
 - Alternativ unterstützt YTuner auch `stations.yaml`/`.yml` (siehe Upstream-Doku). Template dieses Repos verwendet `stations.ini`.
 
+### HTTPS-only Streams (Stream-Proxy)
+
+Viele ältere AVRs können kein HTTPS/TLS. Wenn ein Stream nur per `https://` erreichbar ist, kann YTuner die URL zwar als HTTP darstellen, aber die TLS-Verbindung selbst nicht für den AVR terminieren. Dafür ist der mitgelieferte Proxy gedacht.
+
+**Proxy-URL-Format:**
+
+```text
+http://<YTUNER_IP>:8090/stream?url=<URL-ENCODED-ODER-NORMALE-HTTPS-URL>
+```
+
+Beispiel in `stations.ini`:
+
+```ini
+[HTTPS Streams]
+Radio RKB=http://192.168.1.120:8090/stream?url=https://stream.radios.bzh/listen/rkb/radio.mp3
+```
+
+**Proxy-Konfiguration:** `/etc/default/ytuner-stream-proxy`
+
+```bash
+STREAM_PROXY_HOST=0.0.0.0
+STREAM_PROXY_PORT=8090
+STREAM_PROXY_TIMEOUT=15
+STREAM_PROXY_MAX_REDIRECTS=5
+STREAM_PROXY_LOG_LEVEL=INFO
+```
+
+Nach Änderungen:
+
+```bash
+sudo systemctl restart ytuner-stream-proxy
+sudo systemctl status ytuner-stream-proxy --no-pager
+```
+
 ## Betrieb, Update und Backup
 
 ### systemd-Betrieb
@@ -270,18 +335,20 @@ Station Name=http://stream.url/example.mp3|http://logo.url/logo.png
 ```bash
 # Status
 sudo systemctl status ytuner --no-pager
+sudo systemctl status ytuner-stream-proxy --no-pager
 
 # Neustart / Stopp / Start
 sudo systemctl restart ytuner
-sudo systemctl stop ytuner
-sudo systemctl start ytuner
+sudo systemctl restart ytuner-stream-proxy
 
 # Logs
 sudo journalctl -u ytuner -n 100 --no-pager
+sudo journalctl -u ytuner-stream-proxy -n 100 --no-pager
 sudo tail -f /var/log/ytuner.log
+sudo tail -f /var/log/ytuner-stream-proxy.log
 ```
 
-Die mitgelieferte Unit startet ` /opt/ytuner/ytuner` als `root` im WorkingDirectory `/opt/ytuner`, mit `Restart=always` und Logging nach `/var/log/ytuner.log`.
+Die Units starten als `root` (wegen Ports 80/53 und einfachem LXC-Betrieb). YTuner loggt nach `/var/log/ytuner.log`, der Stream-Proxy nach `/var/log/ytuner-stream-proxy.log`.
 
 ### Update
 
@@ -321,17 +388,21 @@ Gesichert werden (falls vorhanden):
 ### Schnellchecks
 
 ```bash
-# Service aktiv?
+# Services aktiv?
 sudo systemctl status ytuner --no-pager
+sudo systemctl status ytuner-stream-proxy --no-pager
 
 # Ports offen?
-sudo ss -lntup | grep -E ':80 |:53 '
+sudo ss -lntup | grep -E ':80 |:53 |:8090 '
 
 # DNS-Intercept funktioniert? (von anderem LAN-Client)
 dig @<YTUNER_IP> pioneer.vtuner.com +short
 
-# HTTP antwortet?
+# YTuner HTTP antwortet?
 curl -I http://<YTUNER_IP>/
+
+# Stream-Proxy antwortet?
+curl -I http://<YTUNER_IP>:8090/health
 ```
 
 ### Typische Probleme
@@ -343,6 +414,7 @@ curl -I http://<YTUNER_IP>/
 | Stationen laden langsam / Abbruch beim ersten Start | Radio-browser DB initialer Aufbau, wenig RAM | LXC auf 1024MB RAM erhöhen; Log prüfen (`/var/log/ytuner.log`) |
 | Senderlisten leer/gefiltert | Zu restriktive Filter in `avr.ini` | Filter in `/opt/ytuner/config/avr.ini` lockern, Service neustarten |
 | AVR kann browsen, aber Streams schlagen fehl | Netzwerk/Codec/HTTPS/AVR-spezifisches Verhalten | Log prüfen, `Protocol`/Cache/SSL-Einstellungen testen, Upstream-Issues zum AVR-Modell prüfen |
+| HTTPS-only Sender spielt nicht | AVR kann kein TLS; Stream braucht Proxy | Sender-URL über `http://<YTUNER_IP>:8090/stream?url=https://...` testen; Proxy-Logs prüfen |
 | Nach Reboot kein Dienst | Service nicht enabled oder Container nicht gestartet | `systemctl is-enabled ytuner`, `pct config <CTID>` (`onboot`) prüfen |
 
 Weitere AVR-spezifische Schritte: [docs/AVR-SETUP.md](docs/AVR-SETUP.md).
@@ -350,7 +422,8 @@ Weitere AVR-spezifische Schritte: [docs/AVR-SETUP.md](docs/AVR-SETUP.md).
 ## Sicherheitshinweise
 
 - **DNS-Intercept ist wirkungsvoll:** Stelle sicher, dass nur intended Clients (AVRs) den YTuner als DNS nutzen.
-- **Port 53/80 im LAN exponiert:** Firewalling auf Proxmox/LXC/Netzwerkebene empfehlenswert (nur LAN erlauben).
+- **Ports 53/80/8090 im LAN exponiert:** Firewalling auf Proxmox/LXC/Netzwerkebene empfehlenswert (nur LAN erlauben).
+- **Stream-Proxy:** Der Proxy holt beliebige vom Client angegebene HTTP/HTTPS-URLs. Im LAN ist das üblich, aber in nicht vertrauenswürdigen Netzen sollte der Zugriff auf Port 8090 eingeschränkt werden.
 - **Service läuft als root:** Upstream-YTuner benötigt privilegierte Ports; Betrieb in isoliertem LXC reduziert Risiko.
 - **Keine Secrets im Repo:** Dieses Repo enthält keine API-Keys; halte lokale Credentials/Token außerhalb von Git.
 - **Config-Backups:** Vor Updates/Änderungen `scripts/backup-config.sh` nutzen.

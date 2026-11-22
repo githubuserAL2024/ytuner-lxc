@@ -1,0 +1,20 @@
+[Unit]
+Description=YTuner HTTPS->HTTP stream proxy
+Documentation=https://github.com/coffeegreg/YTuner
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+EnvironmentFile=-/etc/default/ytuner-stream-proxy
+ExecStart=/usr/bin/python3 /opt/ytuner/ytuner-stream-proxy.py
+Restart=always
+RestartSec=3
+StandardOutput=append:/var/log/ytuner-stream-proxy.log
+StandardError=append:/var/log/ytuner-stream-proxy.log
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

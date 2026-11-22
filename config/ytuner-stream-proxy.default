@@ -1,0 +1,16 @@
+# /etc/default/ytuner-stream-proxy
+# Configuration for ytuner-stream-proxy.service
+
+# Listen address/port for the HTTP stream proxy.
+STREAM_PROXY_HOST=0.0.0.0
+STREAM_PROXY_PORT=8090
+
+# Upstream timeout (seconds) and redirect limit.
+STREAM_PROXY_TIMEOUT=15
+STREAM_PROXY_MAX_REDIRECTS=5
+
+# Log level: DEBUG, INFO, WARNING, ERROR
+STREAM_PROXY_LOG_LEVEL=INFO
+
+# Optional custom User-Agent for upstream requests.
+# STREAM_PROXY_USER_AGENT=Mozilla/5.0 (compatible; YTuner-Stream-Proxy/0.1)

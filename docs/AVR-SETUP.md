@@ -2,6 +2,14 @@
 
 This guide covers the network/AVR side after YTuner is running in the LXC.
 
+## 0. Know the ports
+
+This rollout exposes:
+
+- **TCP 80** - YTuner web/API endpoint for AVR
+- **UDP 53** - YTuner DNS intercept
+- **TCP 8090** - HTTPS→HTTP stream proxy (for HTTPS-only stations)
+
 ## 1. Give YTuner a stable IP
 
 Use either:
@@ -78,6 +86,24 @@ Disable the conflicting service or reconfigure. The installer handles `systemd-r
 - Ensure SQLite3 is installed (`sqlite3 --version`).
 - Check `/var/log/ytuner.log` for errors.
 - Some AVRs need specific icon/protocol settings; see upstream issues/discussions.
+
+### HTTPS-only station won't play on old AVR
+
+Many AVRs cannot open TLS connections. Use the included stream proxy:
+
+```text
+http://<YTUNER_IP>:8090/stream?url=https://original-stream-url
+```
+
+Add that URL to `stations.ini` (My Stations) or test it directly:
+
+```bash
+curl -I http://<YTUNER_IP>:8090/health
+curl -v "http://<YTUNER_IP>:8090/stream?url=https://example.com/stream.mp3" | head
+sudo tail -f /var/log/ytuner-stream-proxy.log
+```
+
+If the proxy works but the AVR still fails, the station may use an unsupported codec/container for that AVR.
 
 ### Radio-browser DB build killed / slow
 

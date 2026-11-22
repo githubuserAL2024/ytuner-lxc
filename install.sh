@@ -139,9 +139,9 @@ if command -v apt-get >/dev/null 2>&1; then
   run apt-get update
   run apt-get install -y --no-install-recommends \
     ca-certificates wget curl unzip tar sqlite3 libsqlite3-0 \
-    iproute2 net-tools file
+    python3 iproute2 net-tools file
 else
-  warn "apt-get not found; please ensure wget/curl, unzip, sqlite3, iproute2 are installed."
+  warn "apt-get not found; please ensure wget/curl, unzip, sqlite3, python3, iproute2 are installed."
 fi
 
 need_cmd wget
@@ -425,13 +425,336 @@ else
   log "--no-start set; skipping service enable/start."
 fi
 
+# --- Stream proxy (HTTPS -> HTTP) --------------------------------------------
+PROXY_PY='#!/usr/bin/env python3
+"""
+ytuner-stream-proxy - HTTPS->HTTP stream relay for old AVRs.
+
+Listens on HTTP and proxies audio streams from HTTPS (or HTTP) upstreams.
+Designed for YTuner/AVR setups where the AVR cannot speak TLS.
+
+Usage examples:
+  http://<host>:8090/stream?url=https://example.com/radio.mp3
+  http://<host>:8090/https://example.com/radio.mp3
+
+Environment variables:
+  STREAM_PROXY_HOST       Bind address (default: 0.0.0.0)
+  STREAM_PROXY_PORT       Bind port (default: 8090)
+  STREAM_PROXY_TIMEOUT    Upstream connect/read timeout seconds (default: 15)
+  STREAM_PROXY_MAX_REDIRECTS  Max redirects to follow (default: 5)
+  STREAM_PROXY_USER_AGENT User-Agent sent upstream
+  STREAM_PROXY_LOG_LEVEL  DEBUG, INFO, WARNING, ERROR (default: INFO)
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import socket
+import sys
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.error import HTTPError, URLError
+from urllib.parse import parse_qs, urlsplit, urlunsplit
+from urllib.request import Request, build_opener, HTTPRedirectHandler, HTTPSHandler, HTTPHandler
+
+
+HOST = os.environ.get("STREAM_PROXY_HOST", "0.0.0.0")
+PORT = int(os.environ.get("STREAM_PROXY_PORT", "8090"))
+TIMEOUT = float(os.environ.get("STREAM_PROXY_TIMEOUT", "15"))
+MAX_REDIRECTS = int(os.environ.get("STREAM_PROXY_MAX_REDIRECTS", "5"))
+USER_AGENT = os.environ.get(
+    "STREAM_PROXY_USER_AGENT",
+    "Mozilla/5.0 (compatible; YTuner-Stream-Proxy/0.1; +https://github.com/coffeegreg/YTuner)",
+)
+LOG_LEVEL = os.environ.get("STREAM_PROXY_LOG_LEVEL", "INFO").upper()
+
+
+def setup_logging() -> logging.Logger:
+    logging.basicConfig(
+        level=getattr(logging, LOG_LEVEL, logging.INFO),
+        format="%(asctime)s %(levelname)s %(message)s",
+        stream=sys.stdout,
+    )
+    return logging.getLogger("ytuner-stream-proxy")
+
+
+LOG = setup_logging()
+
+
+class LimitedRedirectHandler(HTTPRedirectHandler):
+    def __init__(self, max_redirects: int) -> None:
+        self.max_redirects = max_redirects
+        self.redirect_count = 0
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+        self.redirect_count += 1
+        if self.redirect_count > self.max_redirects:
+            raise HTTPError(newurl, code, f"Too many redirects (>{self.max_redirects})", headers, fp)
+        LOG.debug("Redirect %s -> %s", req.full_url, newurl)
+        new_req = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new_req is not None:
+            new_req.add_unredirected_header("User-Agent", USER_AGENT)
+        return new_req
+
+
+def build_url_opener() -> object:
+    redirect_handler = LimitedRedirectHandler(MAX_REDIRECTS)
+    return build_opener(HTTPHandler(), HTTPSHandler(), redirect_handler)
+
+
+def sanitize_upstream_url(raw: str) -> str:
+    raw = (raw or "").strip()
+    if not raw:
+        raise ValueError("Missing upstream URL")
+    if raw.startswith("https://") or raw.startswith("http://"):
+        candidate = raw
+    else:
+        candidate = "http://" + raw
+    parts = urlsplit(candidate)
+    scheme = parts.scheme.lower()
+    if scheme not in ("http", "https"):
+        raise ValueError(f"Unsupported URL scheme: {parts.scheme}")
+    if not parts.netloc:
+        raise ValueError("Upstream URL missing host")
+    path = parts.path or "/"
+    return urlunsplit((scheme, parts.netloc, path, parts.query, ""))
+
+
+def extract_target_url(path: str) -> str:
+    if path.startswith("/http://") or path.startswith("/https://"):
+        return sanitize_upstream_url(path[1:])
+    parts = urlsplit(path)
+    if parts.path in ("/stream", "/proxy", "/"):
+        qs = parse_qs(parts.query)
+        values = qs.get("url") or qs.get("u") or qs.get("stream")
+        if not values:
+            if parts.path == "/":
+                raise ValueError("index")
+            raise ValueError("Missing 'url' query parameter")
+        return sanitize_upstream_url(values[0])
+    qs = parse_qs(parts.query)
+    values = qs.get("url") or qs.get("u") or qs.get("stream")
+    if values:
+        return sanitize_upstream_url(values[0])
+    raise ValueError("Unsupported path. Use /stream?url=https://...")
+
+
+class ProxyHandler(BaseHTTPRequestHandler):
+    server_version = "YTunerStreamProxy/0.1"
+    sys_version = ""
+
+    def log_message(self, fmt: str, *args) -> None:  # noqa: A003
+        LOG.info("%s - %s", self.address_string(), fmt % args)
+
+    def _send_text(self, code: int, body: str, content_type: str = "text/plain; charset=utf-8") -> None:
+        data = body.encode("utf-8", errors="replace")
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError, socket.timeout):
+            pass
+
+    def _send_index(self) -> None:
+        host = self.headers.get("Host") or f"{HOST}:{PORT}"
+        body = (
+            "YTuner HTTPS->HTTP Stream Proxy\n\n"
+            "Usage:\n"
+            f"  http://{host}/stream?url=https://example.com/stream.mp3\n"
+            f"  http://{host}/https://example.com/stream.mp3\n\n"
+            "Health:\n"
+            f"  http://{host}/health\n"
+        )
+        self._send_text(200, body)
+
+    def do_GET(self) -> None:  # noqa: N802
+        if self.path in ("/health", "/healthz"):
+            self._send_text(200, "ok\n")
+            return
+        try:
+            upstream_url = extract_target_url(self.path)
+        except ValueError as exc:
+            if str(exc) == "index":
+                self._send_index()
+                return
+            self._send_text(400, f"Bad request: {exc}\n")
+            return
+        self._proxy(upstream_url, head_only=False)
+
+    def do_HEAD(self) -> None:  # noqa: N802
+        if self.path in ("/health", "/healthz"):
+            self._send_text(200, "ok\n")
+            return
+        try:
+            upstream_url = extract_target_url(self.path)
+        except ValueError as exc:
+            self._send_text(400, f"Bad request: {exc}\n")
+            return
+        self._proxy(upstream_url, head_only=True)
+
+    def _proxy(self, upstream_url: str, head_only: bool) -> None:
+        req_headers = {
+            "User-Agent": USER_AGENT,
+            "Accept": "*/*",
+            "Connection": "close",
+        }
+        range_header = self.headers.get("Range")
+        if range_header:
+            req_headers["Range"] = range_header
+        icy = self.headers.get("Icy-MetaData")
+        if icy:
+            req_headers["Icy-MetaData"] = icy
+
+        request = Request(upstream_url, headers=req_headers, method="HEAD" if head_only else "GET")
+        opener = build_url_opener()
+        LOG.info("Proxying %s -> %s", self.command, upstream_url)
+        try:
+            resp = opener.open(request, timeout=TIMEOUT)
+        except HTTPError as exc:
+            self._send_text(502, f"Upstream HTTP error: {exc.code} {exc.reason}\nURL: {upstream_url}\n")
+            return
+        except URLError as exc:
+            self._send_text(502, f"Upstream connection error: {exc.reason}\nURL: {upstream_url}\n")
+            return
+        except Exception as exc:  # noqa: BLE001
+            self._send_text(502, f"Proxy error: {exc}\nURL: {upstream_url}\n")
+            return
+
+        with resp:
+            status = getattr(resp, "status", 200)
+            try:
+                self.send_response(status)
+            except (BrokenPipeError, ConnectionResetError):
+                return
+            content_type = resp.headers.get("Content-Type")
+            if content_type:
+                self.send_header("Content-Type", content_type)
+            content_length = resp.headers.get("Content-Length")
+            if content_length and not head_only:
+                self.send_header("Content-Length", content_length)
+            content_range = resp.headers.get("Content-Range")
+            if content_range:
+                self.send_header("Content-Range", content_range)
+            accept_ranges = resp.headers.get("Accept-Ranges")
+            if accept_ranges:
+                self.send_header("Accept-Ranges", accept_ranges)
+            for key, value in resp.headers.items():
+                if key.lower().startswith("icy-"):
+                    self.send_header(key, value)
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "close")
+            try:
+                self.end_headers()
+            except (BrokenPipeError, ConnectionResetError):
+                return
+            if head_only:
+                return
+            try:
+                while True:
+                    chunk = resp.read(64 * 1024)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, socket.timeout):
+                LOG.info("Client disconnected: %s", upstream_url)
+            except Exception as exc:  # noqa: BLE001
+                LOG.warning("Stream error for %s: %s", upstream_url, exc)
+
+
+class ProxyServer(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def handle_error(self, request, client_address) -> None:  # noqa: ANN001
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, socket.timeout)):
+            LOG.debug("Client connection error from %s: %s", client_address, exc)
+            return
+        super().handle_error(request, client_address)
+
+
+def main() -> int:
+    server = ProxyServer((HOST, PORT), ProxyHandler)
+    LOG.info("Listening on http://%s:%s", HOST, PORT)
+    LOG.info("Example: http://<host>:%s/stream?url=https://example.com/radio.mp3", PORT)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        LOG.info("Shutting down")
+    finally:
+        server.server_close()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+'
+
+PROXY_DEFAULT='STREAM_PROXY_HOST=0.0.0.0
+STREAM_PROXY_PORT=8090
+STREAM_PROXY_TIMEOUT=15
+STREAM_PROXY_MAX_REDIRECTS=5
+STREAM_PROXY_LOG_LEVEL=INFO
+'
+
+PROXY_SERVICE_UNIT='[Unit]
+Description=YTuner HTTPS->HTTP stream proxy
+Documentation=https://github.com/coffeegreg/YTuner
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+EnvironmentFile=-/etc/default/ytuner-stream-proxy
+ExecStart=/usr/bin/python3 /opt/ytuner/ytuner-stream-proxy.py
+Restart=always
+RestartSec=3
+StandardOutput=append:/var/log/ytuner-stream-proxy.log
+StandardError=append:/var/log/ytuner-stream-proxy.log
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+'
+
+log "Installing HTTPS->HTTP stream proxy..."
+write_file "$INSTALL_DIR/ytuner-stream-proxy.py" "0755" "$PROXY_PY"
+if [[ -f /etc/default/ytuner-stream-proxy && "$FORCE_CONFIG" != "1" ]]; then
+  log "Keeping existing config: /etc/default/ytuner-stream-proxy"
+else
+  write_file "/etc/default/ytuner-stream-proxy" "0644" "$PROXY_DEFAULT"
+fi
+write_file "/etc/systemd/system/ytuner-stream-proxy.service" "0644" "$PROXY_SERVICE_UNIT"
+
+# --- Enable & start -----------------------------------------------------------
+if [[ "$NO_START" == "0" ]]; then
+  if command -v systemctl >/dev/null 2>&1; then
+    run systemctl daemon-reload
+    run systemctl enable ytuner.service
+    run systemctl enable ytuner-stream-proxy.service
+    run systemctl restart ytuner.service
+    run systemctl restart ytuner-stream-proxy.service
+    sleep 2
+    run systemctl --no-pager --full status ytuner.service || true
+    run systemctl --no-pager --full status ytuner-stream-proxy.service || true
+  else
+    warn "systemctl not found. Start manually: $INSTALL_DIR/ytuner and /usr/bin/python3 $INSTALL_DIR/ytuner-stream-proxy.py"
+  fi
+else
+  log "--no-start set; skipping service enable/start."
+fi
+
 # --- Verification -------------------------------------------------------------
-log "Verifying listeners (80/tcp, 53/udp)..."
+log "Verifying listeners (80/tcp, 53/udp, 8090/tcp)..."
 if command -v ss >/dev/null 2>&1; then
   if [[ "$DRY_RUN" == "1" ]]; then
-    printf '+ ss -lntup | grep -E ":80 |:53 "\n'
+    printf '+ ss -lntup | grep -E ":80 |:53 |:8090 "\n'
   else
-    ss -lntup | grep -E ':80\s|:53\s' || warn "Ports 80/53 not visible yet. Check logs: journalctl -u ytuner -n 100 --no-pager"
+    ss -lntup | grep -E ':80\s|:53\s|:8090\s' || warn "Ports 80/53/8090 not visible yet. Check logs: journalctl -u ytuner -n 100 --no-pager; journalctl -u ytuner-stream-proxy -n 100 --no-pager"
   fi
 fi
 
@@ -448,18 +771,25 @@ Install dir:  $INSTALL_DIR
 Config:       $INSTALL_DIR/ytuner.ini
 AVR config:   $INSTALL_DIR/config/avr.ini
 Stations:     $INSTALL_DIR/config/stations.ini
+Proxy:        http://${IP_HINT}:8090/stream?url=https://...
+Proxy cfg:    /etc/default/ytuner-stream-proxy
 Logs:         /var/log/ytuner.log
-Service:      systemctl status ytuner
+              /var/log/ytuner-stream-proxy.log
+Services:     systemctl status ytuner
+              systemctl status ytuner-stream-proxy
 
 Next steps:
   1) Ensure this container has a stable IP (DHCP reservation or static).
   2) On your AVR, set DNS server to: $IP_HINT
   3) Disable AVR proxy if configured.
-  4) Reboot/open Internet Radio on the AVR.
+  4) For HTTPS-only stations, use:
+     http://${IP_HINT}:8090/stream?url=https://STREAM-URL
+  5) Reboot/open Internet Radio on the AVR.
 
 Checks:
-  ss -lntup | grep -E ':80 |:53 '
+  ss -lntup | grep -E ':80 |:53 |:8090 '
   dig @${IP_HINT} pioneer.vtuner.com +short
+  curl -I "http://${IP_HINT}:8090/health"
   tail -f /var/log/ytuner.log
 
 Docs: https://github.com/coffeegreg/YTuner

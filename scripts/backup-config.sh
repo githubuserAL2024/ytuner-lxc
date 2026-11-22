@@ -50,8 +50,12 @@ for p in \
   "$INSTALL_DIR/config" \
   "$INSTALL_DIR/db" \
   "$INSTALL_DIR/cache" \
+  "$INSTALL_DIR/ytuner-stream-proxy.py" \
+  "/etc/default/ytuner-stream-proxy" \
   "/etc/systemd/system/ytuner.service" \
-  "/var/log/ytuner.log"; do
+  "/etc/systemd/system/ytuner-stream-proxy.service" \
+  "/var/log/ytuner.log" \
+  "/var/log/ytuner-stream-proxy.log"; do
   if [[ -e "$p" ]]; then
     printf '%s\n' "$p" >> "$TMP_LIST"
   fi

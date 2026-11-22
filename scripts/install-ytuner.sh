@@ -77,7 +77,11 @@ if [[ "$(uname -s)" != "Linux" ]]; then
   die "This installer supports Linux only."
 fi
 
-for f in "$CONFIG_SOURCE/ytuner.ini" "$CONFIG_SOURCE/avr.ini" "$CONFIG_SOURCE/stations.ini" "$SERVICE_SOURCE"; do
+PROXY_SERVICE_SOURCE="${REPO_DIR}/systemd/ytuner-stream-proxy.service"
+PROXY_DEFAULT_SOURCE="${REPO_DIR}/config/ytuner-stream-proxy.default"
+PROXY_SCRIPT_SOURCE="${REPO_DIR}/scripts/ytuner-stream-proxy.py"
+
+for f in "$CONFIG_SOURCE/ytuner.ini" "$CONFIG_SOURCE/avr.ini" "$CONFIG_SOURCE/stations.ini" "$SERVICE_SOURCE" "$PROXY_SERVICE_SOURCE" "$PROXY_DEFAULT_SOURCE" "$PROXY_SCRIPT_SOURCE"; do
   [[ -f "$f" ]] || die "Missing required template: $f"
 done
 
@@ -212,6 +216,21 @@ for extra in bookmark.xml; do
   fi
 done
 
+log "Installing HTTPS->HTTP stream proxy..."
+if [[ "$DRY_RUN" == "1" ]]; then
+  printf '+ install -m 0755 %q %q\n' "$PROXY_SCRIPT_SOURCE" "$INSTALL_DIR/ytuner-stream-proxy.py"
+  printf '+ install -m 0644 %q /etc/systemd/system/ytuner-stream-proxy.service\n' "$PROXY_SERVICE_SOURCE"
+  printf '+ install -m 0644 %q /etc/default/ytuner-stream-proxy\n' "$PROXY_DEFAULT_SOURCE"
+else
+  install -m 0755 "$PROXY_SCRIPT_SOURCE" "$INSTALL_DIR/ytuner-stream-proxy.py"
+  install -m 0644 "$PROXY_SERVICE_SOURCE" /etc/systemd/system/ytuner-stream-proxy.service
+  if [[ -f /etc/default/ytuner-stream-proxy && "$FORCE_CONFIG" != "1" ]]; then
+    log "Keeping existing config: /etc/default/ytuner-stream-proxy"
+  else
+    install -m 0644 "$PROXY_DEFAULT_SOURCE" /etc/default/ytuner-stream-proxy
+  fi
+fi
+
 log "Installing systemd service..."
 if [[ "$DRY_RUN" == "1" ]]; then
   printf '+ install -m 0644 %q /etc/systemd/system/ytuner.service\n' "$SERVICE_SOURCE"
@@ -223,24 +242,29 @@ if [[ "$NO_START" == "0" ]]; then
   if command -v systemctl >/dev/null 2>&1; then
     run systemctl daemon-reload
     run systemctl enable ytuner.service
+    run systemctl enable ytuner-stream-proxy.service
     run systemctl restart ytuner.service
+    run systemctl restart ytuner-stream-proxy.service
     sleep 2
     run systemctl --no-pager --full status ytuner.service || true
+    run systemctl --no-pager --full status ytuner-stream-proxy.service || true
   else
-    warn "systemctl not available; start manually: $INSTALL_DIR/ytuner"
+    warn "systemctl not available; start manually: $INSTALL_DIR/ytuner and $INSTALL_DIR/ytuner-stream-proxy.py"
   fi
 else
   log "--no-start set; skipping service enable/start."
 fi
 
-log "Verifying listeners (ports 80/tcp, 53/udp)..."
+log "Verifying listeners (ports 80/tcp, 53/udp, 8090/tcp)..."
 if command -v ss >/dev/null 2>&1; then
-  ss -lntup | grep -E ':80\s|:53\s' || warn "Expected ports 80/53 not visible yet. Check: journalctl -u ytuner -n 100 --no-pager"
+  ss -lntup | grep -E ':80\s|:53\s|:8090\s' || warn "Expected ports 80/53/8090 not visible yet. Check: journalctl -u ytuner -n 100 --no-pager; journalctl -u ytuner-stream-proxy -n 100 --no-pager"
 else
-  netstat -lntup 2>/dev/null | grep -E ':80\s|:53\s' || warn "Could not verify ports (ss/netstat missing or ports not bound)."
+  netstat -lntup 2>/dev/null | grep -E ':80\s|:53\s|:8090\s' || warn "Could not verify ports (ss/netstat missing or ports not bound)."
 fi
 
 log "Installation complete."
-log "Config: $INSTALL_DIR/ytuner.ini"
-log "Logs:   /var/log/ytuner.log (and journalctl -u ytuner)"
-log "Next:   point your AVR DNS to this container's IP."
+log "YTuner config:      $INSTALL_DIR/ytuner.ini"
+log "Stream proxy:       http://<CONTAINER-IP>:8090/stream?url=https://..."
+log "Proxy config:       /etc/default/ytuner-stream-proxy"
+log "Logs:               /var/log/ytuner.log, /var/log/ytuner-stream-proxy.log"
+log "Next:               point your AVR DNS to this container's IP."

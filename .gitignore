@@ -8,3 +8,6 @@
 
 # Internal tooling
 .omo/
+
+__pycache__/
+*.pyc

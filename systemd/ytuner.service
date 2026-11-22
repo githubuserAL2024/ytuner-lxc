@@ -1,0 +1,20 @@
+[Unit]
+Description=YTuner vTuner replacement service
+Documentation=https://github.com/coffeegreg/YTuner
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/ytuner
+ExecStart=/opt/ytuner/ytuner
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/ytuner.log
+StandardError=append:/var/log/ytuner.log
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

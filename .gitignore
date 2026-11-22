@@ -1,0 +1,10 @@
+# Runtime/artifacts
+*.log
+*.zip
+*.tar.gz
+*.deb
+.tmp/
+.DS_Store
+
+# Internal tooling
+.omo/

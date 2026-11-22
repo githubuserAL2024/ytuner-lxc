@@ -9,6 +9,7 @@ This rollout exposes:
 - **TCP 80** - YTuner web/API endpoint for AVR
 - **UDP 53** - YTuner DNS intercept
 - **TCP 8090** - HTTPS→HTTP stream proxy (for HTTPS-only stations)
+- **TCP 8091** - Admin WebUI/API (settings, logs, autotests; optional, restrict to admin LAN)
 
 ## 1. Give YTuner a stable IP
 
@@ -104,6 +105,14 @@ sudo tail -f /var/log/ytuner-stream-proxy.log
 ```
 
 If the proxy works but the AVR still fails, the station may use an unsupported codec/container for that AVR.
+
+### Admin WebUI / API / Autotests
+
+- Open: `http://<YTUNER_IP>:8091/`
+- Health: `curl -I http://<YTUNER_IP>:8091/api/health`
+- Run tests via API: `curl -X POST http://<YTUNER_IP>:8091/api/tests/run`
+- Run tests via CLI: `/usr/bin/python3 /opt/ytuner/ytuner-autotest.py --json --include-admin`
+- Config: `/etc/default/ytuner-admin` (optional `YTUNER_ADMIN_TOKEN`)
 
 ### Radio-browser DB build killed / slow
 

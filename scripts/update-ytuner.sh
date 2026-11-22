@@ -88,6 +88,12 @@ REPO_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 PROXY_SCRIPT_SOURCE="${REPO_DIR}/scripts/ytuner-stream-proxy.py"
 PROXY_SERVICE_SOURCE="${REPO_DIR}/systemd/ytuner-stream-proxy.service"
 PROXY_DEFAULT_SOURCE="${REPO_DIR}/config/ytuner-stream-proxy.default"
+ADMIN_SCRIPT_SOURCE="${REPO_DIR}/scripts/ytuner-admin.py"
+AUTOTEST_SCRIPT_SOURCE="${REPO_DIR}/scripts/ytuner-autotest.py"
+ADMIN_SERVICE_SOURCE="${REPO_DIR}/systemd/ytuner-admin.service"
+ADMIN_DEFAULT_SOURCE="${REPO_DIR}/config/ytuner-admin.default"
+WEBUI_SOURCE="${REPO_DIR}/webui"
+
 if [[ -f "$PROXY_SCRIPT_SOURCE" ]]; then
   log "Updating stream proxy script..."
   if [[ "$DRY_RUN" == "1" ]]; then
@@ -111,6 +117,46 @@ if [[ -f "$PROXY_DEFAULT_SOURCE" && ! -f /etc/default/ytuner-stream-proxy ]]; th
   fi
 fi
 
+if [[ -f "$ADMIN_SCRIPT_SOURCE" ]]; then
+  log "Updating admin script..."
+  if [[ "$DRY_RUN" == "1" ]]; then
+    printf '+ install -m 0755 %q %q\n' "$ADMIN_SCRIPT_SOURCE" "$INSTALL_DIR/ytuner-admin.py"
+  else
+    install -m 0755 "$ADMIN_SCRIPT_SOURCE" "$INSTALL_DIR/ytuner-admin.py"
+  fi
+fi
+if [[ -f "$AUTOTEST_SCRIPT_SOURCE" ]]; then
+  log "Updating autotest script..."
+  if [[ "$DRY_RUN" == "1" ]]; then
+    printf '+ install -m 0755 %q %q\n' "$AUTOTEST_SCRIPT_SOURCE" "$INSTALL_DIR/ytuner-autotest.py"
+  else
+    install -m 0755 "$AUTOTEST_SCRIPT_SOURCE" "$INSTALL_DIR/ytuner-autotest.py"
+  fi
+fi
+if [[ -d "$WEBUI_SOURCE" ]]; then
+  log "Updating webui..."
+  if [[ "$DRY_RUN" == "1" ]]; then
+    printf '+ cp -a %q %q\n' "$WEBUI_SOURCE" "$INSTALL_DIR/webui"
+  else
+    rm -rf "$INSTALL_DIR/webui"
+    cp -a "$WEBUI_SOURCE" "$INSTALL_DIR/webui"
+  fi
+fi
+if [[ -f "$ADMIN_SERVICE_SOURCE" ]]; then
+  if [[ "$DRY_RUN" == "1" ]]; then
+    printf '+ install -m 0644 %q /etc/systemd/system/ytuner-admin.service\n' "$ADMIN_SERVICE_SOURCE"
+  else
+    install -m 0644 "$ADMIN_SERVICE_SOURCE" /etc/systemd/system/ytuner-admin.service
+  fi
+fi
+if [[ -f "$ADMIN_DEFAULT_SOURCE" && ! -f /etc/default/ytuner-admin ]]; then
+  if [[ "$DRY_RUN" == "1" ]]; then
+    printf '+ install -m 0644 %q /etc/default/ytuner-admin\n' "$ADMIN_DEFAULT_SOURCE"
+  else
+    install -m 0644 "$ADMIN_DEFAULT_SOURCE" /etc/default/ytuner-admin
+  fi
+fi
+
 if [[ "$NO_RESTART" == "0" ]] && command -v systemctl >/dev/null 2>&1; then
   run systemctl daemon-reload || true
   log "Restarting ytuner.service..."
@@ -120,6 +166,11 @@ if [[ "$NO_RESTART" == "0" ]] && command -v systemctl >/dev/null 2>&1; then
     log "Restarting ytuner-stream-proxy.service..."
     run systemctl restart ytuner-stream-proxy.service || true
     run systemctl --no-pager --full status ytuner-stream-proxy.service || true
+  fi
+  if systemctl list-unit-files | grep -q '^ytuner-admin\.service'; then
+    log "Restarting ytuner-admin.service..."
+    run systemctl restart ytuner-admin.service || true
+    run systemctl --no-pager --full status ytuner-admin.service || true
   fi
 fi
 

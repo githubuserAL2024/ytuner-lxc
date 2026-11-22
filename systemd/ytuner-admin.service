@@ -1,0 +1,19 @@
+[Unit]
+Description=YTuner Admin WebUI and API
+After=network-online.target ytuner.service ytuner-stream-proxy.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/ytuner
+EnvironmentFile=-/etc/default/ytuner-admin
+ExecStart=/usr/bin/python3 /opt/ytuner/ytuner-admin.py
+Restart=always
+RestartSec=3
+StandardOutput=append:/var/log/ytuner-admin.log
+StandardError=append:/var/log/ytuner-admin.log
+
+[Install]
+WantedBy=multi-user.target

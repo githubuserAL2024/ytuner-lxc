@@ -26,10 +26,12 @@ Dieses Rollout stellt bereit:
 - **Automatische Installation** im Container (`scripts/install-ytuner.sh`)
 - **One-Shot-Installer** (`install.sh`) für `wget ... | bash` Installation
 - **HTTPS→HTTP Stream-Proxy** (`scripts/ytuner-stream-proxy.py`) als eigener systemd-Dienst
+- **Admin WebUI + API** (`scripts/ytuner-admin.py`, `webui/`) für Status, Einstellungen und Logs
+- **Autotest-Tool** (`scripts/ytuner-autotest.py`) inkl. Ausführung über WebUI/API
 - **Update-Skript** mit Binary-Backup (`scripts/update-ytuner.sh`)
 - **Backup-Skript** für Config/DB/Cache/Logs (`scripts/backup-config.sh`)
-- **systemd-Services** (`systemd/ytuner.service`, `systemd/ytuner-stream-proxy.service`)
-- **Konfigurationsvorlagen** (`config/ytuner.ini`, `config/avr.ini`, `config/stations.ini`, `config/ytuner-stream-proxy.default`)
+- **systemd-Services** (`systemd/ytuner.service`, `systemd/ytuner-stream-proxy.service`, `systemd/ytuner-admin.service`)
+- **Konfigurationsvorlagen** (`config/ytuner.ini`, `config/avr.ini`, `config/stations.ini`, `config/ytuner-stream-proxy.default`, `config/ytuner-admin.default`)
 - **AVR-/Netzwerk-Anleitung** (`docs/AVR-SETUP.md`)
 
 ## Wie YTuner funktioniert
@@ -39,10 +41,10 @@ YTuner stellt zwei zentrale Dienste bereit:
 - **Webservice (TCP/80):** Endpunkte, die AVRs für Stationslisten/Bookmarks/Streams erwarten.
 - **DNS-Intercept (UDP/53):** fängt vTuner-bezogene Domains ab und beantwortet sie mit der IP des YTuner-Hosts.
 
-Zusätzlich liefert dieses Rollout einen **HTTPS→HTTP Stream-Proxy**:
+Zusätzlich liefert dieses Rollout:
 
-- **Stream-Proxy (TCP/8090):** nimmt HTTP-Anfragen vom AVR entgegen, holt den Upstream-Stream per HTTPS (oder HTTP) und liefert ihn als HTTP an den AVR zurück.
-- **Zweck:** Viele alte AVRs können kein TLS/HTTPS. YTuners `Protocol=all-as-http` ändert nur das URL-Schema, stellt aber keine TLS-Verbindung her. Für echte HTTPS-only Streams ist dieser Proxy nötig.
+- **HTTPS→HTTP Stream-Proxy (TCP/8090):** nimmt HTTP-Anfragen vom AVR entgegen, holt den Upstream-Stream per HTTPS (oder HTTP) und liefert ihn als HTTP an den AVR zurück. Zweck: alte AVRs ohne TLS.
+- **Admin WebUI/API (TCP/8091):** zeigt Status/Config, erlaubt Proxy-Einstellungen zu ändern, kann Dienste neu starten, Logs anzeigen und Autotests ausführen.
 
 Typischer Ablauf:
 
@@ -72,7 +74,7 @@ Typischer Ablauf:
 
 ### Netzwerk / Firewall
 
-- **TCP 80**, **UDP 53** und **TCP 8090** müssen vom LAN zum YTuner-Container erreichbar sein
+- **TCP 80**, **UDP 53**, **TCP 8090** und **TCP 8091** müssen vom LAN zum YTuner-Container erreichbar sein (8091 optional, nur für Admin-WebUI/API)
 - Falls Proxmox-Firewall oder Firewall im LXC aktiv ist: entsprechende Regeln setzen
 - Port 53 darf nicht bereits durch anderen DNS-Dienst belegt sein (`systemd-resolved`, `dnsmasq` etc.)
 
@@ -87,6 +89,7 @@ Typischer Ablauf:
 │   ├── avr.ini                       # AVR-Menü/Filter/Sortierung (Template)
 │   ├── stations.ini                  # Beispiel für "My Stations"
 │   ├── ytuner.ini                    # Hauptkonfiguration für YTuner
+│   ├── ytuner-admin.default          # Environment-Datei für Admin WebUI/API
 │   └── ytuner-stream-proxy.default   # Environment-Datei für Stream-Proxy
 ├── docs/
 │   └── AVR-SETUP.md                  # AVR-DNS/Netzwerk-Checkliste & Troubleshooting
@@ -95,9 +98,16 @@ Typischer Ablauf:
 │   ├── create-lxc.sh                 # Proxmox-Host: LXC anlegen
 │   ├── install-ytuner.sh             # Im LXC: Installation + systemd + Verifikation
 │   ├── update-ytuner.sh              # Im LXC: Binary-Update mit Backup
+│   ├── ytuner-admin.py               # Admin WebUI + API + Autotest-Runner
+│   ├── ytuner-autotest.py            # CLI-Autotest für Dienste/Ports/HTTP/Config
 │   └── ytuner-stream-proxy.py        # HTTPS->HTTP Stream-Proxy
+├── webui/
+│   ├── app.js                        # WebUI-Logik
+│   ├── index.html                    # Admin-Oberfläche
+│   └── styles.css                    # WebUI-Styles
 └── systemd/
     ├── ytuner.service                # systemd-Unit für /opt/ytuner/ytuner
+    ├── ytuner-admin.service          # systemd-Unit für Admin WebUI/API
     └── ytuner-stream-proxy.service   # systemd-Unit für Stream-Proxy
 ```
 
@@ -251,9 +261,14 @@ Nach der Installation liegen die produktiven Dateien unter `/opt/ytuner`:
 | `/opt/ytuner/db/rb.db` | Radio-browser SQLite-Cache (bei DB-Cache-Typen) |
 | `/opt/ytuner/cache/` | Icon-/UUID-/Stationscache (je nach Einstellung) |
 | `/opt/ytuner/ytuner-stream-proxy.py` | HTTPS→HTTP Stream-Proxy |
+| `/opt/ytuner/ytuner-admin.py` | Admin WebUI/API Server |
+| `/opt/ytuner/ytuner-autotest.py` | CLI-Autotest |
+| `/opt/ytuner/webui/` | Statische WebUI-Dateien |
 | `/etc/default/ytuner-stream-proxy` | Environment-Konfiguration für Stream-Proxy |
+| `/etc/default/ytuner-admin` | Environment-Konfiguration für Admin WebUI/API |
 | `/var/log/ytuner.log` | YTuner Service-Log |
 | `/var/log/ytuner-stream-proxy.log` | Stream-Proxy Service-Log |
+| `/var/log/ytuner-admin.log` | Admin WebUI/API Service-Log |
 
 Die Dateien im Repo unter `config/` sind **Templates**. Sie werden beim Erstinstall kopiert; bestehende Dateien bleiben erhalten, außer `--force-config` wird gesetzt.
 
@@ -328,6 +343,62 @@ sudo systemctl restart ytuner-stream-proxy
 sudo systemctl status ytuner-stream-proxy --no-pager
 ```
 
+### Admin WebUI / API / Autotest
+
+Die Admin-Oberfläche läuft standardmäßig auf **Port 8091** und bietet:
+
+- Statusübersicht für `ytuner`, `ytuner-stream-proxy`, `ytuner-admin`
+- Port-/Health-Checks (80/53/8090)
+- Anzeige der wichtigsten Konfigurationswerte
+- Bearbeiten/Speichern der Stream-Proxy-Environment (`/etc/default/ytuner-stream-proxy`)
+- Neustart des Stream-Proxy-Dienstes
+- Log-Ansicht (`ytuner.log`, `ytuner-stream-proxy.log`)
+- Ausführen von Autotests über UI
+
+**Aufruf:**
+
+```text
+http://<YTUNER_IP>:8091/
+```
+
+**Konfiguration:** `/etc/default/ytuner-admin`
+
+```bash
+YTUNER_ADMIN_HOST=0.0.0.0
+YTUNER_ADMIN_PORT=8091
+YTUNER_ADMIN_TOKEN=              # optional; wenn gesetzt, API/UI-Requests benötigen X-Admin-Token oder ?token=
+YTUNER_ADMIN_ALLOW_SYSTEMCTL=1   # erlaubt Service-Restart über API
+```
+
+Nach Änderungen:
+
+```bash
+sudo systemctl restart ytuner-admin
+sudo systemctl status ytuner-admin --no-pager
+```
+
+**API-Endpunkte (für Autotests/Automation):**
+
+| Methode | Pfad | Beschreibung |
+|---|---|---|
+| GET | `/api/health` | Healthcheck Admin-API |
+| GET | `/api/status` | Status von Services, Ports, Konfigurationsüberblick |
+| GET | `/api/config` | Aktuelle Konfigurationswerte (read-only Überblick) |
+| POST | `/api/config/proxy` | Speichert Stream-Proxy-Env-Werte (`STREAM_PROXY_*`) |
+| POST | `/api/service/restart` | Neustart eines erlaubten Dienstes (`{"name":"ytuner-stream-proxy"}`) |
+| GET | `/api/logs?name=ytuner|proxy&lines=200` | Log-Tail |
+| GET/POST | `/api/tests/run` | Führt Autotests aus und liefert JSON-Ergebnis |
+
+**Autotest-CLI:**
+
+```bash
+/usr/bin/python3 /opt/ytuner/ytuner-autotest.py
+/usr/bin/python3 /opt/ytuner/ytuner-autotest.py --json
+/usr/bin/python3 /opt/ytuner/ytuner-autotest.py --json --include-admin
+```
+
+Der Autotest prüft u. a. Service-Status, Ports, wichtige Dateien, HTTP-Healthchecks und Python-Syntax der Proxy/Admin-Skripte.
+
 ## Betrieb, Update und Backup
 
 ### systemd-Betrieb
@@ -336,19 +407,23 @@ sudo systemctl status ytuner-stream-proxy --no-pager
 # Status
 sudo systemctl status ytuner --no-pager
 sudo systemctl status ytuner-stream-proxy --no-pager
+sudo systemctl status ytuner-admin --no-pager
 
 # Neustart / Stopp / Start
 sudo systemctl restart ytuner
 sudo systemctl restart ytuner-stream-proxy
+sudo systemctl restart ytuner-admin
 
 # Logs
 sudo journalctl -u ytuner -n 100 --no-pager
 sudo journalctl -u ytuner-stream-proxy -n 100 --no-pager
+sudo journalctl -u ytuner-admin -n 100 --no-pager
 sudo tail -f /var/log/ytuner.log
 sudo tail -f /var/log/ytuner-stream-proxy.log
+sudo tail -f /var/log/ytuner-admin.log
 ```
 
-Die Units starten als `root` (wegen Ports 80/53 und einfachem LXC-Betrieb). YTuner loggt nach `/var/log/ytuner.log`, der Stream-Proxy nach `/var/log/ytuner-stream-proxy.log`.
+Die Units starten als `root` (wegen Ports 80/53 und einfachem LXC-Betrieb). YTuner loggt nach `/var/log/ytuner.log`, der Stream-Proxy nach `/var/log/ytuner-stream-proxy.log`, Admin nach `/var/log/ytuner-admin.log`.
 
 ### Update
 
@@ -376,12 +451,11 @@ sudo bash scripts/backup-config.sh --output /root/ytuner-backup.tar.gz
 
 Gesichert werden (falls vorhanden):
 
-- `/opt/ytuner/ytuner.ini`
-- `/opt/ytuner/config/`
-- `/opt/ytuner/db/`
-- `/opt/ytuner/cache/`
-- `/etc/systemd/system/ytuner.service`
-- `/var/log/ytuner.log`
+- `/opt/ytuner/ytuner.ini`, `/opt/ytuner/config/`, `/opt/ytuner/db/`, `/opt/ytuner/cache/`, `/opt/ytuner/webui/`
+- `/opt/ytuner/ytuner-stream-proxy.py`, `/opt/ytuner/ytuner-admin.py`, `/opt/ytuner/ytuner-autotest.py`
+- `/etc/default/ytuner-stream-proxy`, `/etc/default/ytuner-admin`
+- `/etc/systemd/system/ytuner.service`, `ytuner-stream-proxy.service`, `ytuner-admin.service`
+- `/var/log/ytuner.log`, `/var/log/ytuner-stream-proxy.log`, `/var/log/ytuner-admin.log`
 
 ## Validierung und Troubleshooting
 
@@ -391,9 +465,10 @@ Gesichert werden (falls vorhanden):
 # Services aktiv?
 sudo systemctl status ytuner --no-pager
 sudo systemctl status ytuner-stream-proxy --no-pager
+sudo systemctl status ytuner-admin --no-pager
 
 # Ports offen?
-sudo ss -lntup | grep -E ':80 |:53 |:8090 '
+sudo ss -lntup | grep -E ':80 |:53 |:8090 |:8091 '
 
 # DNS-Intercept funktioniert? (von anderem LAN-Client)
 dig @<YTUNER_IP> pioneer.vtuner.com +short
@@ -403,6 +478,12 @@ curl -I http://<YTUNER_IP>/
 
 # Stream-Proxy antwortet?
 curl -I http://<YTUNER_IP>:8090/health
+
+# Admin UI/API antwortet?
+curl -I http://<YTUNER_IP>:8091/api/health
+
+# Autotest
+/usr/bin/python3 /opt/ytuner/ytuner-autotest.py --json --include-admin
 ```
 
 ### Typische Probleme
@@ -422,8 +503,9 @@ Weitere AVR-spezifische Schritte: [docs/AVR-SETUP.md](docs/AVR-SETUP.md).
 ## Sicherheitshinweise
 
 - **DNS-Intercept ist wirkungsvoll:** Stelle sicher, dass nur intended Clients (AVRs) den YTuner als DNS nutzen.
-- **Ports 53/80/8090 im LAN exponiert:** Firewalling auf Proxmox/LXC/Netzwerkebene empfehlenswert (nur LAN erlauben).
+- **Ports 53/80/8090/8091 im LAN exponiert:** Firewalling auf Proxmox/LXC/Netzwerkebene empfehlenswert (nur LAN erlauben). Port 8091 (Admin UI/API) nur für Admin-Netze freigeben.
 - **Stream-Proxy:** Der Proxy holt beliebige vom Client angegebene HTTP/HTTPS-URLs. Im LAN ist das üblich, aber in nicht vertrauenswürdigen Netzen sollte der Zugriff auf Port 8090 eingeschränkt werden.
+- **Admin-API:** Optional `YTUNER_ADMIN_TOKEN` in `/etc/default/ytuner-admin` setzen; dann Requests mit `X-Admin-Token` oder `?token=`.
 - **Service läuft als root:** Upstream-YTuner benötigt privilegierte Ports; Betrieb in isoliertem LXC reduziert Risiko.
 - **Keine Secrets im Repo:** Dieses Repo enthält keine API-Keys; halte lokale Credentials/Token außerhalb von Git.
 - **Config-Backups:** Vor Updates/Änderungen `scripts/backup-config.sh` nutzen.

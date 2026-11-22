@@ -80,10 +80,16 @@ fi
 PROXY_SERVICE_SOURCE="${REPO_DIR}/systemd/ytuner-stream-proxy.service"
 PROXY_DEFAULT_SOURCE="${REPO_DIR}/config/ytuner-stream-proxy.default"
 PROXY_SCRIPT_SOURCE="${REPO_DIR}/scripts/ytuner-stream-proxy.py"
+ADMIN_SERVICE_SOURCE="${REPO_DIR}/systemd/ytuner-admin.service"
+ADMIN_DEFAULT_SOURCE="${REPO_DIR}/config/ytuner-admin.default"
+ADMIN_SCRIPT_SOURCE="${REPO_DIR}/scripts/ytuner-admin.py"
+AUTOTEST_SCRIPT_SOURCE="${REPO_DIR}/scripts/ytuner-autotest.py"
+WEBUI_SOURCE="${REPO_DIR}/webui"
 
-for f in "$CONFIG_SOURCE/ytuner.ini" "$CONFIG_SOURCE/avr.ini" "$CONFIG_SOURCE/stations.ini" "$SERVICE_SOURCE" "$PROXY_SERVICE_SOURCE" "$PROXY_DEFAULT_SOURCE" "$PROXY_SCRIPT_SOURCE"; do
+for f in "$CONFIG_SOURCE/ytuner.ini" "$CONFIG_SOURCE/avr.ini" "$CONFIG_SOURCE/stations.ini" "$SERVICE_SOURCE" "$PROXY_SERVICE_SOURCE" "$PROXY_DEFAULT_SOURCE" "$PROXY_SCRIPT_SOURCE" "$ADMIN_SERVICE_SOURCE" "$ADMIN_DEFAULT_SOURCE" "$ADMIN_SCRIPT_SOURCE" "$AUTOTEST_SCRIPT_SOURCE"; do
   [[ -f "$f" ]] || die "Missing required template: $f"
 done
+[[ -d "$WEBUI_SOURCE" ]] || die "Missing required directory: $WEBUI_SOURCE"
 
 ARCH_RAW="$(uname -m)"
 case "$ARCH_RAW" in
@@ -121,7 +127,7 @@ if command -v apt-get >/dev/null 2>&1; then
   run apt-get update
   run apt-get install -y --no-install-recommends \
     ca-certificates wget unzip sqlite3 libsqlite3-0 \
-    iproute2 net-tools curl file
+    python3 iproute2 net-tools curl file coreutils
 else
   warn "apt-get not found; ensure wget/unzip/sqlite3/iproute2 are installed."
 fi
@@ -231,6 +237,26 @@ else
   fi
 fi
 
+log "Installing Admin WebUI/API and autotest..."
+if [[ "$DRY_RUN" == "1" ]]; then
+  printf '+ install -m 0755 %q %q\n' "$ADMIN_SCRIPT_SOURCE" "$INSTALL_DIR/ytuner-admin.py"
+  printf '+ install -m 0755 %q %q\n' "$AUTOTEST_SCRIPT_SOURCE" "$INSTALL_DIR/ytuner-autotest.py"
+  printf '+ install -m 0644 %q /etc/systemd/system/ytuner-admin.service\n' "$ADMIN_SERVICE_SOURCE"
+  printf '+ install -m 0644 %q /etc/default/ytuner-admin\n' "$ADMIN_DEFAULT_SOURCE"
+  printf '+ cp -a %q %q\n' "$WEBUI_SOURCE" "$INSTALL_DIR/webui"
+else
+  install -m 0755 "$ADMIN_SCRIPT_SOURCE" "$INSTALL_DIR/ytuner-admin.py"
+  install -m 0755 "$AUTOTEST_SCRIPT_SOURCE" "$INSTALL_DIR/ytuner-autotest.py"
+  install -m 0644 "$ADMIN_SERVICE_SOURCE" /etc/systemd/system/ytuner-admin.service
+  if [[ -f /etc/default/ytuner-admin && "$FORCE_CONFIG" != "1" ]]; then
+    log "Keeping existing config: /etc/default/ytuner-admin"
+  else
+    install -m 0644 "$ADMIN_DEFAULT_SOURCE" /etc/default/ytuner-admin
+  fi
+  rm -rf "$INSTALL_DIR/webui"
+  cp -a "$WEBUI_SOURCE" "$INSTALL_DIR/webui"
+fi
+
 log "Installing systemd service..."
 if [[ "$DRY_RUN" == "1" ]]; then
   printf '+ install -m 0644 %q /etc/systemd/system/ytuner.service\n' "$SERVICE_SOURCE"
@@ -243,28 +269,33 @@ if [[ "$NO_START" == "0" ]]; then
     run systemctl daemon-reload
     run systemctl enable ytuner.service
     run systemctl enable ytuner-stream-proxy.service
+    run systemctl enable ytuner-admin.service
     run systemctl restart ytuner.service
     run systemctl restart ytuner-stream-proxy.service
+    run systemctl restart ytuner-admin.service
     sleep 2
     run systemctl --no-pager --full status ytuner.service || true
     run systemctl --no-pager --full status ytuner-stream-proxy.service || true
+    run systemctl --no-pager --full status ytuner-admin.service || true
   else
-    warn "systemctl not available; start manually: $INSTALL_DIR/ytuner and $INSTALL_DIR/ytuner-stream-proxy.py"
+    warn "systemctl not available; start manually: $INSTALL_DIR/ytuner, $INSTALL_DIR/ytuner-stream-proxy.py, $INSTALL_DIR/ytuner-admin.py"
   fi
 else
   log "--no-start set; skipping service enable/start."
 fi
 
-log "Verifying listeners (ports 80/tcp, 53/udp, 8090/tcp)..."
+log "Verifying listeners (ports 80/tcp, 53/udp, 8090/tcp, 8091/tcp)..."
 if command -v ss >/dev/null 2>&1; then
-  ss -lntup | grep -E ':80\s|:53\s|:8090\s' || warn "Expected ports 80/53/8090 not visible yet. Check: journalctl -u ytuner -n 100 --no-pager; journalctl -u ytuner-stream-proxy -n 100 --no-pager"
+  ss -lntup | grep -E ':80\s|:53\s|:8090\s|:8091\s' || warn "Expected ports 80/53/8090/8091 not visible yet. Check: journalctl -u ytuner -n 100 --no-pager; journalctl -u ytuner-stream-proxy -n 100 --no-pager; journalctl -u ytuner-admin -n 100 --no-pager"
 else
-  netstat -lntup 2>/dev/null | grep -E ':80\s|:53\s|:8090\s' || warn "Could not verify ports (ss/netstat missing or ports not bound)."
+  netstat -lntup 2>/dev/null | grep -E ':80\s|:53\s|:8090\s|:8091\s' || warn "Could not verify ports (ss/netstat missing or ports not bound)."
 fi
 
 log "Installation complete."
 log "YTuner config:      $INSTALL_DIR/ytuner.ini"
 log "Stream proxy:       http://<CONTAINER-IP>:8090/stream?url=https://..."
+log "Admin UI/API:       http://<CONTAINER-IP>:8091/"
 log "Proxy config:       /etc/default/ytuner-stream-proxy"
-log "Logs:               /var/log/ytuner.log, /var/log/ytuner-stream-proxy.log"
+log "Admin config:       /etc/default/ytuner-admin"
+log "Logs:               /var/log/ytuner.log, /var/log/ytuner-stream-proxy.log, /var/log/ytuner-admin.log"
 log "Next:               point your AVR DNS to this container's IP."

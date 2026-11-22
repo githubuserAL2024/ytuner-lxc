@@ -1,0 +1,413 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
+
+
+INSTALL_DIR = Path(os.environ.get("YTUNER_INSTALL_DIR", "/opt/ytuner"))
+CONFIG_DIR = INSTALL_DIR / "config"
+YTUNER_INI = INSTALL_DIR / "ytuner.ini"
+AVR_INI = CONFIG_DIR / "avr.ini"
+STATIONS_INI = CONFIG_DIR / "stations.ini"
+PROXY_ENV = Path("/etc/default/ytuner-stream-proxy")
+PROXY_SCRIPT = INSTALL_DIR / "ytuner-stream-proxy.py"
+WEB_DIR = Path(os.environ.get("YTUNER_ADMIN_WEB_DIR", "/opt/ytuner/webui"))
+LOG_FILES = {
+    "ytuner": Path("/var/log/ytuner.log"),
+    "proxy": Path("/var/log/ytuner-stream-proxy.log"),
+}
+SERVICES = ["ytuner", "ytuner-stream-proxy"]
+ALLOW_SYSTEMCTL = os.environ.get("YTUNER_ADMIN_ALLOW_SYSTEMCTL", "1") != "0"
+HOST = os.environ.get("YTUNER_ADMIN_HOST", "0.0.0.0")
+PORT = int(os.environ.get("YTUNER_ADMIN_PORT", "8091"))
+TOKEN = os.environ.get("YTUNER_ADMIN_TOKEN", "")
+
+
+def run_cmd(cmd: list[str], timeout: float = 20.0) -> dict:
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
+        return {
+            "ok": proc.returncode == 0,
+            "rc": proc.returncode,
+            "stdout": proc.stdout[-8000:],
+            "stderr": proc.stderr[-8000:],
+            "cmd": cmd,
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "rc": -1, "stdout": "", "stderr": str(exc), "cmd": cmd}
+
+
+def read_text(path: Path) -> str:
+    if not path.exists():
+        return ""
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
+def write_text_atomic(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(content, encoding="utf-8")
+    tmp.replace(path)
+
+
+def ini_get(content: str, section: str, key: str, default: str = "") -> str:
+    in_section = False
+    sec_re = re.compile(r"^\s*\[(.+?)\]\s*$")
+    kv_re = re.compile(r"^\s*([^;#=\s][^=]*?)\s*=\s*(.*?)\s*$")
+    for line in content.splitlines():
+        m = sec_re.match(line)
+        if m:
+            in_section = m.group(1).strip().lower() == section.lower()
+            continue
+        if not in_section:
+            continue
+        km = kv_re.match(line)
+        if km and km.group(1).strip().lower() == key.lower():
+            return km.group(2)
+    return default
+
+
+def env_parse(content: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for line in content.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        out[k.strip()] = v.strip().strip('"').strip("'")
+    return out
+
+
+def env_render(existing: str, updates: dict[str, str]) -> str:
+    lines = existing.splitlines() if existing else []
+    seen: set[str] = set()
+    out: list[str] = []
+    for line in lines:
+        if "=" in line and not line.lstrip().startswith("#"):
+            k = line.split("=", 1)[0].strip()
+            ku = k.upper()
+            if ku in updates:
+                out.append(f"{k}={updates[ku]}")
+                seen.add(ku)
+                continue
+        out.append(line)
+    for k, v in updates.items():
+        if k not in seen:
+            out.append(f"{k}={v}")
+    return "\n".join(out).rstrip() + "\n"
+
+
+def service_status(name: str) -> dict:
+    if not ALLOW_SYSTEMCTL or shutil.which("systemctl") is None:
+        active = run_cmd(["sh", "-lc", f"pgrep -af {name} >/dev/null && echo active || echo inactive"], timeout=5)
+        return {"name": name, "active": active["stdout"].strip(), "enabled": "unknown", "detail": active}
+    active = run_cmd(["systemctl", "is-active", name], timeout=10)
+    enabled = run_cmd(["systemctl", "is-enabled", name], timeout=10)
+    show = run_cmd(["systemctl", "show", name, "--property=ActiveState,SubState,UnitFileState,MainPID,ExecMainStatus"], timeout=10)
+    props = {}
+    for line in show["stdout"].splitlines():
+        if "=" in line:
+            k, v = line.split("=", 1)
+            props[k.strip()] = v.strip()
+    return {
+        "name": name,
+        "active": active["stdout"].strip() or props.get("ActiveState", "unknown"),
+        "enabled": enabled["stdout"].strip() or props.get("UnitFileState", "unknown"),
+        "props": props,
+    }
+
+
+def port_check(port: int, host: str = "127.0.0.1") -> dict:
+    import socket
+
+    s = socket.socket()
+    s.settimeout(1.5)
+    try:
+        s.connect((host, port))
+        s.close()
+        return {"port": port, "open": True}
+    except Exception as exc:  # noqa: BLE001
+        return {"port": port, "open": False, "error": str(exc)}
+    finally:
+        try:
+            s.close()
+        except Exception:
+            pass
+
+
+def http_check(url: str, timeout: float = 5.0) -> dict:
+    from urllib.request import Request, urlopen
+
+    req = Request(url, headers={"User-Agent": "ytuner-admin/0.1"})
+    t0 = time.time()
+    try:
+        with urlopen(req, timeout=timeout) as resp:
+            body = resp.read(512)
+            return {
+                "url": url,
+                "ok": 200 <= getattr(resp, "status", 200) < 500,
+                "status": getattr(resp, "status", 200),
+                "ms": int((time.time() - t0) * 1000),
+                "bytes": len(body),
+            }
+    except Exception as exc:  # noqa: BLE001
+        return {"url": url, "ok": False, "error": str(exc), "ms": int((time.time() - t0) * 1000)}
+
+
+def collect_config() -> dict:
+    ytuner = read_text(YTUNER_INI)
+    avr = read_text(AVR_INI)
+    proxy = env_parse(read_text(PROXY_ENV))
+    return {
+        "paths": {
+            "install_dir": str(INSTALL_DIR),
+            "ytuner_ini": str(YTUNER_INI),
+            "avr_ini": str(AVR_INI),
+            "stations_ini": str(STATIONS_INI),
+            "proxy_env": str(PROXY_ENV),
+        },
+        "ytuner": {
+            "web_port": ini_get(ytuner, "WebServer", "WebServerPort", "80"),
+            "dns_port": ini_get(ytuner, "DNSServer", "DNSServerPort", "53"),
+            "dns_enable": ini_get(ytuner, "DNSServer", "Enable", "1"),
+            "intercept_dns": ini_get(ytuner, "DNSServer", "InterceptDNs", ""),
+            "rb_cache_type": ini_get(ytuner, "Radiobrowser", "RBCacheType", ""),
+            "message_level": ini_get(ytuner, "Configuration", "MessageInfoLevel", ""),
+        },
+        "avr": {
+            "protocol": ini_get(avr, "Configuration", "Protocol", ""),
+        },
+        "proxy": {
+            "host": proxy.get("STREAM_PROXY_HOST", "0.0.0.0"),
+            "port": proxy.get("STREAM_PROXY_PORT", "8090"),
+            "timeout": proxy.get("STREAM_PROXY_TIMEOUT", "15"),
+            "max_redirects": proxy.get("STREAM_PROXY_MAX_REDIRECTS", "5"),
+            "log_level": proxy.get("STREAM_PROXY_LOG_LEVEL", "INFO"),
+        },
+    }
+
+
+def save_proxy_env(payload: dict) -> dict:
+    allowed = {
+        "STREAM_PROXY_HOST",
+        "STREAM_PROXY_PORT",
+        "STREAM_PROXY_TIMEOUT",
+        "STREAM_PROXY_MAX_REDIRECTS",
+        "STREAM_PROXY_LOG_LEVEL",
+        "STREAM_PROXY_USER_AGENT",
+    }
+    updates = {}
+    for k, v in payload.items():
+        ku = k.upper()
+        if ku in allowed and v is not None:
+            updates[ku] = str(v).strip()
+    if "STREAM_PROXY_PORT" in updates and not updates["STREAM_PROXY_PORT"].isdigit():
+        raise ValueError("STREAM_PROXY_PORT must be numeric")
+    content = read_text(PROXY_ENV)
+    new_content = env_render(content, updates)
+    write_text_atomic(PROXY_ENV, new_content)
+    return {"saved": True, "path": str(PROXY_ENV), "updates": updates}
+
+
+def run_tests() -> dict:
+    cfg = collect_config()
+    proxy_port = int(cfg["proxy"].get("port", "8090") or "8090")
+    web_port = int(cfg["ytuner"].get("web_port", "80") or "80")
+    dns_port = int(cfg["ytuner"].get("dns_port", "53") or "53")
+    results = []
+
+    def add(name: str, ok: bool, detail: dict | str):
+        results.append({"name": name, "ok": bool(ok), "detail": detail})
+
+    for svc in SERVICES:
+        st = service_status(svc)
+        add(f"service:{svc}", st.get("active") == "active", st)
+
+    add(f"port:{web_port}", port_check(web_port)["open"], port_check(web_port))
+    add(f"port:{dns_port}", port_check(dns_port)["open"], port_check(dns_port))
+    add(f"port:{proxy_port}", port_check(proxy_port)["open"], port_check(proxy_port))
+
+    for p in [YTUNER_INI, AVR_INI, STATIONS_INI, PROXY_ENV]:
+        add(f"file:{p}", p.exists(), {"path": str(p), "exists": p.exists(), "size": p.stat().st_size if p.exists() else 0})
+
+    add("http:ytuner", http_check(f"http://127.0.0.1:{web_port}/", 4.0)["ok"], http_check(f"http://127.0.0.1:{web_port}/", 4.0))
+    add("http:proxy-health", http_check(f"http://127.0.0.1:{proxy_port}/health", 4.0)["ok"], http_check(f"http://127.0.0.1:{proxy_port}/health", 4.0))
+
+    pyc = run_cmd(["python3", "-m", "py_compile", str(PROXY_SCRIPT)], timeout=20)
+    add("python:proxy-compile", pyc["ok"], pyc)
+
+    ok_count = sum(1 for r in results if r["ok"])
+    return {"ok": ok_count == len(results), "total": len(results), "passed": ok_count, "failed": len(results) - ok_count, "results": results, "ts": int(time.time())}
+
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "YTunerAdmin/0.1"
+
+    def log_message(self, fmt: str, *args) -> None:  # noqa: A003
+        sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
+
+    def _auth_ok(self) -> bool:
+        if not TOKEN:
+            return True
+        hdr = self.headers.get("X-Admin-Token") or ""
+        if hdr == TOKEN:
+            return True
+        qs = parse_qs(urlsplit(self.path).query)
+        return (qs.get("token") or [""])[0] == TOKEN
+
+    def _send_json(self, code: int, payload: dict) -> None:
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _send_bytes(self, code: int, data: bytes, content_type: str) -> None:
+        self.send_response(code)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _read_json(self) -> dict:
+        n = int(self.headers.get("Content-Length") or "0")
+        raw = self.rfile.read(n) if n > 0 else b"{}"
+        try:
+            return json.loads(raw.decode("utf-8"))
+        except Exception:
+            return {}
+
+    def _serve_static(self, path: str) -> bool:
+        p = urlsplit(path).path
+        if p == "/":
+            p = "/index.html"
+        safe = Path(p.lstrip("/"))
+        target = (WEB_DIR / safe).resolve()
+        if WEB_DIR.resolve() not in target.parents and target != WEB_DIR.resolve():
+            self._send_json(403, {"ok": False, "error": "forbidden"})
+            return True
+        if not target.exists() or not target.is_file():
+            return False
+        ctype = "text/plain; charset=utf-8"
+        if target.suffix == ".html":
+            ctype = "text/html; charset=utf-8"
+        elif target.suffix == ".css":
+            ctype = "text/css; charset=utf-8"
+        elif target.suffix == ".js":
+            ctype = "application/javascript; charset=utf-8"
+        elif target.suffix == ".json":
+            ctype = "application/json; charset=utf-8"
+        self._send_bytes(200, target.read_bytes(), ctype)
+        return True
+
+    def do_GET(self) -> None:  # noqa: N802
+        parsed = urlsplit(self.path)
+        path = parsed.path
+        if path.startswith("/api/") and not self._auth_ok():
+            self._send_json(401, {"ok": False, "error": "unauthorized"})
+            return
+        if path == "/api/health":
+            self._send_json(200, {"ok": True, "service": "ytuner-admin"})
+            return
+        if path == "/api/status":
+            cfg = collect_config()
+            statuses = [service_status(s) for s in SERVICES]
+            proxy_port = int(cfg["proxy"].get("port", "8090") or "8090")
+            ytuner_port = int(cfg["ytuner"].get("web_port", "80") or "80")
+            dns_port = int(cfg["ytuner"].get("dns_port", "53") or "53")
+            self._send_json(200, {
+                "ok": True,
+                "config": cfg,
+                "services": statuses,
+                "ports": [port_check(ytuner_port), port_check(dns_port), port_check(proxy_port)],
+            })
+            return
+        if path == "/api/config":
+            self._send_json(200, {"ok": True, "config": collect_config()})
+            return
+        if path == "/api/logs":
+            qs = parse_qs(parsed.query)
+            name = (qs.get("name") or ["ytuner"])[0]
+            lines = int((qs.get("lines") or ["120"])[0])
+            lines = max(10, min(lines, 1000))
+            p = LOG_FILES.get(name)
+            if not p:
+                self._send_json(400, {"ok": False, "error": "unknown log"})
+                return
+            text = read_text(p)
+            tail = "\n".join(text.splitlines()[-lines:])
+            self._send_json(200, {"ok": True, "name": name, "path": str(p), "content": tail})
+            return
+        if path == "/api/tests/run":
+            self._send_json(200, run_tests())
+            return
+        if path.startswith("/api/"):
+            self._send_json(404, {"ok": False, "error": "not found"})
+            return
+        if self._serve_static(path):
+            return
+        self._send_json(404, {"ok": False, "error": "not found"})
+
+    def do_POST(self) -> None:  # noqa: N802
+        parsed = urlsplit(self.path)
+        path = parsed.path
+        if not self._auth_ok():
+            self._send_json(401, {"ok": False, "error": "unauthorized"})
+            return
+        payload = self._read_json()
+        if path == "/api/config/proxy":
+            try:
+                res = save_proxy_env(payload)
+                self._send_json(200, {"ok": True, **res})
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(400, {"ok": False, "error": str(exc)})
+            return
+        if path == "/api/service/restart":
+            name = str(payload.get("name") or "")
+            if name not in SERVICES:
+                self._send_json(400, {"ok": False, "error": "invalid service"})
+                return
+            if not ALLOW_SYSTEMCTL or shutil.which("systemctl") is None:
+                self._send_json(400, {"ok": False, "error": "systemctl unavailable"})
+                return
+            res = run_cmd(["systemctl", "restart", name], timeout=30)
+            self._send_json(200 if res["ok"] else 500, {"ok": res["ok"], "result": res, "status": service_status(name)})
+            return
+        if path == "/api/tests/run":
+            self._send_json(200, run_tests())
+            return
+        self._send_json(404, {"ok": False, "error": "not found"})
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--host", default=HOST)
+    ap.add_argument("--port", type=int, default=PORT)
+    args = ap.parse_args()
+    server = ThreadingHTTPServer((args.host, args.port), Handler)
+    print(f"ytuner-admin listening on http://{args.host}:{args.port}", flush=True)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

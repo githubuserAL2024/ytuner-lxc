@@ -73,6 +73,7 @@ Typischer Ablauf:
 ```text
 .
 ├── README.md                  # Diese ausführliche Anleitung
+├── install.sh                 # One-Shot Installer (wget/curl -> bash)
 ├── .gitignore                 # Ignoriert Logs/Archive/temporäre Dateien
 ├── config/
 │   ├── avr.ini                # AVR-Menü/Filter/Sortierung (Template)
@@ -89,45 +90,59 @@ Typischer Ablauf:
     └── ytuner.service         # systemd-Unit für /opt/ytuner/ytuner
 ```
 
-## Schnellstart
+## Schnellstart (One-Shot Installation)
 
-### 1) LXC auf dem Proxmox-Host erstellen
+### Option A: Ein einziges Skript (empfohlen)
 
-Auf dem **Proxmox VE Host** ausführen (nicht im Container):
+Wenn der LXC-Container bereits läuft (Debian/Ubuntu), reicht dieses eine Skript:
 
 ```bash
-# Hilfe / Optionen anzeigen
-bash scripts/create-lxc.sh --help
-
-# Beispiel: CT 120 mit DHCP
-sudo bash scripts/create-lxc.sh --ctid 120 --hostname ytuner --start
-
-# Beispiel: statische IP
-sudo bash scripts/create-lxc.sh \
-  --ctid 120 \
-  --hostname ytuner \
-  --ip 192.168.1.120/24 \
-  --gateway 192.168.1.1 \
-  --dns 192.168.1.1 \
-  --start
+wget -O install.sh http://192.168.50.88:3000/alex/ytuner-lxc/raw/branch/main/install.sh
+sudo bash install.sh
 ```
 
-Standardwerte des Create-Skripts: unprivilegierter Debian-12-LXC, `512MB RAM`, `256MB Swap`, `1 Core`, `8GB Disk`, `nesting=1,keyctl=1`, `onboot=1`.
+Alternativ mit `curl`:
 
-### 2) Projektdateien in den Container kopieren
+```bash
+curl -fsSL http://192.168.50.88:3000/alex/ytuner-lxc/raw/branch/main/install.sh | sudo bash
+```
 
-Vom Proxmox-Host:
+Das Skript installiert automatisch:
+
+- benötigte Pakete (`wget`, `unzip`, `sqlite3`, `libsqlite3-0`, `ca-certificates`, etc.)
+- die passende offizielle YTuner-Binary (architekturabhängig)
+- Default-Konfigurationsdateien unter `/opt/ytuner/` (falls nicht vorhanden)
+- die `systemd`-Unit und aktiviert/startet den Dienst
+- behandelt Port-53-Konflikte mit `systemd-resolved`
+
+Nützliche Optionen:
+
+```bash
+sudo bash install.sh --help
+sudo bash install.sh --version 1.2.6
+sudo bash install.sh --force-config     # überschreibt ytuner.ini/avr.ini/stations.ini
+sudo bash install.sh --no-start         # nur installieren, nicht starten
+```
+
+### Option B: Manuelles Rollout mit Repo-Skripten
+
+#### 1) LXC auf dem Proxmox-Host erstellen
+
+Auf dem **Proxmox VE Host** ausführen:
+
+```bash
+bash scripts/create-lxc.sh --help
+sudo bash scripts/create-lxc.sh --ctid 120 --hostname ytuner --start
+```
+
+#### 2) Projektdateien in den Container kopieren
 
 ```bash
 pct push 120 /home/Exchange/ytuner-lxc /root/ytuner-lxc -r
 pct enter 120
 ```
 
-Alternativ: Repository im Container klonen.
-
-### 3) YTuner im Container installieren
-
-**Im LXC** ausführen:
+#### 3) Im LXC installieren
 
 ```bash
 cd /root/ytuner-lxc

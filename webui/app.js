@@ -73,15 +73,49 @@ async function restartProxy(){
 }
 
 /* ---- Tests ---- */
+const MATRIX_SIZE = 49; // 7x7
+let matrixState = Array(MATRIX_SIZE).fill('red');
+function renderMatrix(){
+  const m = $('#testMatrix');
+  if (!m) return;
+  m.innerHTML = matrixState.map((s,i)=>`<span class="lamp ${s}" title="Slot ${i+1}: ${s}"></span>`).join('');
+}
+function setMatrixAll(state){ matrixState = Array(MATRIX_SIZE).fill(state); renderMatrix(); }
+function setMatrixRunning(count){
+  const n = Math.max(0, Math.min(MATRIX_SIZE, count|0));
+  matrixState = Array(MATRIX_SIZE).fill('red').map((_,i)=> i < n ? 'yellow' : 'red');
+  renderMatrix();
+}
+function applyMatrixResults(results){
+  const n = Math.max(0, Math.min(MATRIX_SIZE, (results||[]).length));
+  matrixState = Array(MATRIX_SIZE).fill('red').map((_,i)=> {
+    if (i >= n) return 'red';
+    return results[i].ok ? 'green' : 'red';
+  });
+  renderMatrix();
+  const extra = (results||[]).length > MATRIX_SIZE ? ` (zeigt erste ${MATRIX_SIZE} von ${results.length})` : '';
+  $('#matrixStatus').textContent = `49 Slots (7x7). ${n} Tests gemappt${extra}.`;
+}
 async function runTests(){
   $('#testSummary').textContent = 'Tests laufen...';
   $('#testResults').innerHTML = '';
-  try { renderTests(await api('/api/tests/run', {method:'POST'})); }
-  catch(e){ $('#testSummary').textContent = 'Fehler: ' + e.message; }
+  // optimistic: show all yellow while request is running
+  setMatrixAll('yellow');
+  $('#matrixStatus').textContent = '49 Slots (7x7). Tests laufen...';
+  try {
+    const d = await api('/api/tests/run', {method:'POST'});
+    renderTests(d);
+  }
+  catch(e){
+    setMatrixAll('red');
+    $('#matrixStatus').textContent = '49 Slots (7x7). Testlauf fehlgeschlagen.';
+    $('#testSummary').textContent = 'Fehler: ' + e.message;
+  }
 }
 function renderTests(d){
   $('#testSummary').innerHTML = `${badge(d.ok, d.ok?'PASS':'FAIL')} ${d.passed}/${d.total} bestanden, ${d.failed} fehlgeschlagen`;
   $('#testResults').innerHTML = (d.results||[]).map(r=>`<div class="test"><div class="head"><span>${esc(r.name)}</span>${badge(r.ok,r.ok?'ok':'fail')}</div><pre>${esc(JSON.stringify(r.detail, null, 2))}</pre></div>`).join('');
+  applyMatrixResults(d.results||[]);
 }
 
 /* ---- Stations ---- */
@@ -216,6 +250,7 @@ $('#restartProxyBtn').addEventListener('click', restartProxy);
 $('#refreshLogsBtn').addEventListener('click', ()=>loadLogs(currentLog));
 $$('.tab[data-log]').forEach(b=>b.addEventListener('click', ()=>loadLogs(b.dataset.log)));
 
+renderMatrix();
 loadStatus().catch(e=>$('#statusSummary').textContent='Fehler: '+e.message);
 loadStations().catch(()=>{});
 loadLogs('ytuner').catch(()=>{});

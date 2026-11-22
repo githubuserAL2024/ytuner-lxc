@@ -92,7 +92,16 @@
             <h2>Autotest / Diagnose</h2>
             <div class="actions"><button id="runTestsBtn" class="primary">Tests ausführen</button></div>
           </div>
-          <div id="testSummary" class="muted">Noch keine Tests ausgeführt.</div>
+          <div class="matrix-wrap">
+            <div>
+              <div id="testMatrix" class="test-matrix" aria-label="7x7 Testmatrix"></div>
+              <div class="matrix-legend muted small"><span><i class="lamp red"></i> nicht bestanden/offen</span><span><i class="lamp yellow"></i> läuft</span><span><i class="lamp green"></i> bestanden</span></div>
+            </div>
+            <div class="matrix-meta">
+              <div id="testSummary" class="muted">Noch keine Tests ausgeführt.</div>
+              <div id="matrixStatus" class="muted small">49 Slots (7x7). Tests werden auf Slots abgebildet.</div>
+            </div>
+          </div>
           <div id="testResults" class="test-results"></div>
         </section>
 

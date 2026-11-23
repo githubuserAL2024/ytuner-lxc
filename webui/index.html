@@ -10,16 +10,22 @@
   <header class="topbar">
     <div>
       <h1>YTuner Admin</h1>
-      <p class="muted">Weboberfläche für YTuner, Stream-Proxy und Diagnose</p>
+      <p class="muted" data-i18n="subtitle">Weboberfläche für YTuner, Stream-Proxy und Diagnose</p>
     </div>
     <div class="actions">
-      <button id="refreshBtn">Aktualisieren</button>
+      <label class="lang-toggle" title="Sprache / Language">
+        <span id="langLabelDE">DE</span>
+        <input type="checkbox" id="langToggle" aria-label="Switch language DE/EN">
+        <span class="slider"></span>
+        <span id="langLabelEN">EN</span>
+      </label>
+      <button id="refreshBtn" data-i18n="refresh">Aktualisieren</button>
     </div>
   </header>
 
   <nav class="main-tabs">
-    <button class="main-tab active" data-tab="stations">1. Radiosender pflegen</button>
-    <button class="main-tab" data-tab="admin">2. Administration / Tests</button>
+    <button class="main-tab active" data-tab="stations" data-i18n="tabStations">1. Radiosender pflegen</button>
+    <button class="main-tab" data-tab="admin" data-i18n="tabAdmin">2. Administration / Tests</button>
   </nav>
 
   <main>
@@ -29,12 +35,12 @@
         <section class="card wide">
           <div class="section-head">
             <div>
-              <h2>YTuner-Quellen / Überbleibsel</h2>
-              <p class="muted small">Steuert, welche Quellen der AVR im YTuner-Menü sieht. "Überbleibsel" kommen meist aus Radio-Browser/Bookmarks/alten Stations-Dateien.</p>
+              <h2 data-i18n="sourcesTitle">YTuner-Quellen / Überbleibsel</h2>
+              <p class="muted small" data-i18n="sourcesHelp">Steuert, welche Quellen der AVR im YTuner-Menü sieht. "Überbleibsel" kommen meist aus Radio-Browser/Bookmarks/alten Stations-Dateien.</p>
             </div>
             <div class="actions">
-              <button type="button" id="reloadSourcesBtn">Neu laden</button>
-              <button type="button" id="saveSourcesBtn" class="primary">Quellen speichern</button>
+              <button type="button" id="reloadSourcesBtn" data-i18n="reload">Neu laden</button>
+              <button type="button" id="saveSourcesBtn" class="primary" data-i18n="saveSources">Quellen speichern</button>
             </div>
           </div>
           <div id="sourcesForm" class="sources-form"></div>
@@ -45,22 +51,22 @@
         <section class="card wide">
           <div class="section-head">
             <div>
-              <h2>Senderliste / Ordnerstruktur (stations.ini)</h2>
-              <p class="muted small">Ordner (Gruppen) und Sender für "My Stations" pflegen. Nach dem Speichern liest YTuner die Datei je nach Einstellung neu ein (ggf. Service neu starten).</p>
+              <h2 data-i18n="stationsTitle">Senderliste / Ordnerstruktur (stations.ini)</h2>
+              <p class="muted small" data-i18n="stationsHelp">Ordner (Gruppen) und Sender für "My Stations" pflegen. Nach dem Speichern liest YTuner die Datei je nach Einstellung neu ein (ggf. Service neu starten).</p>
             </div>
             <div class="actions">
-              <button type="button" id="addGroupBtn">+ Ordner</button>
-              <button type="button" id="checkAllStationsBtn">Alle prüfen</button>
-              <button type="button" id="addStationBtn">+ Sender</button>
-              <button type="button" id="reloadStationsBtn">Neu laden</button>
-              <button type="button" id="saveStationsBtn" class="primary">Speichern</button>
+              <button type="button" id="addGroupBtn" data-i18n="addFolder">+ Ordner</button>
+              <button type="button" id="checkAllStationsBtn" data-i18n="checkAll">Alle prüfen</button>
+              <button type="button" id="addStationBtn" data-i18n="addStation">+ Sender</button>
+              <button type="button" id="reloadStationsBtn" data-i18n="reload">Neu laden</button>
+              <button type="button" id="saveStationsBtn" class="primary" data-i18n="save">Speichern</button>
             </div>
           </div>
           <div id="stationsEditor" class="stations-editor"></div>
           <details style="margin-top:12px">
-            <summary>Raw stations.ini bearbeiten</summary>
+            <summary data-i18n="rawEdit">Raw stations.ini bearbeiten</summary>
             <textarea id="stationsRaw" class="raw-editor" spellcheck="false"></textarea>
-            <div class="form-actions"><button type="button" id="saveStationsRawBtn">Raw speichern</button></div>
+            <div class="form-actions"><button type="button" id="saveStationsRawBtn" data-i18n="saveRaw">Raw speichern</button></div>
           </details>
           <pre id="stationsSaveResult" class="result muted"></pre>
         </section>
@@ -71,14 +77,14 @@
     <section id="tab-admin" class="tab-panel">
       <div class="grid">
         <section class="card">
-          <h2>Status</h2>
-          <div id="statusSummary" class="muted">Lade...</div>
+          <h2 data-i18n="statusTitle">Status</h2>
+          <div id="statusSummary" class="muted" data-i18n="loading">Lade...</div>
           <div id="services" class="list"></div>
           <div id="ports" class="list"></div>
         </section>
 
         <section class="card">
-          <h2>Stream-Proxy Einstellungen</h2>
+          <h2 data-i18n="proxyTitle">Stream-Proxy Einstellungen</h2>
           <form id="proxyForm" class="form">
             <label>Host<input name="STREAM_PROXY_HOST" placeholder="0.0.0.0"></label>
             <label>Port<input name="STREAM_PROXY_PORT" type="number" min="1" max="65535"></label>
@@ -91,44 +97,44 @@
             </label>
             <label>User Agent<input name="STREAM_PROXY_USER_AGENT" placeholder="Mozilla/5.0 ..."></label>
             <div class="form-actions">
-              <button type="submit" class="primary">Speichern</button>
-              <button type="button" id="restartProxyBtn">Proxy neustarten</button>
+              <button type="submit" class="primary" data-i18n="save">Speichern</button>
+              <button type="button" id="restartProxyBtn" data-i18n="restartProxy">Proxy neustarten</button>
             </div>
           </form>
           <pre id="proxySaveResult" class="result muted"></pre>
         </section>
 
         <section class="card">
-          <h2>YTuner Konfiguration (read-only Überblick)</h2>
+          <h2 data-i18n="configTitle">YTuner Konfiguration (read-only Überblick)</h2>
           <div id="configView" class="kv"></div>
           <p class="muted small">Dateibasierte Kernkonfigurationen werden angezeigt; Bearbeitung erfolgt über INI/Env-Dateien am Server.</p>
         </section>
 
         <section class="card wide">
           <div class="section-head">
-            <h2>Autotest / Diagnose</h2>
-            <div class="actions"><button id="runTestsBtn" class="primary">Tests ausführen</button></div>
+            <h2 data-i18n="testsTitle">Autotest / Diagnose</h2>
+            <div class="actions"><button id="runTestsBtn" class="primary" data-i18n="runTests">Tests ausführen</button></div>
           </div>
           <div class="matrix-wrap">
             <div>
               <div id="testMatrix" class="test-matrix" aria-label="Testmatrix"></div>
-              <div class="matrix-legend muted small"><span><i class="lamp red"></i> nicht bestanden/offen</span><span><i class="lamp yellow"></i> läuft</span><span><i class="lamp green"></i> bestanden</span></div>
+              <div class="matrix-legend muted small"><span><i class="lamp red"></i> <span data-i18n="legendRed">nicht bestanden/offen</span></span><span><i class="lamp yellow"></i> <span data-i18n="legendYellow">läuft</span></span><span><i class="lamp green"></i> <span data-i18n="legendGreen">bestanden</span></span></div>
             </div>
             <div class="matrix-meta">
-              <div id="testSummary" class="muted">Noch keine Tests ausgeführt.</div>
-              <div id="matrixStatus" class="muted small">Matrix wird nach Testlauf geladen.</div>
+              <div id="testSummary" class="muted" data-i18n="noTestsYet">Noch keine Tests ausgeführt.</div>
+              <div id="matrixStatus" class="muted small" data-i18n="matrixPending">Matrix wird nach Testlauf geladen.</div>
             </div>
           </div>
           <div id="testResults" class="test-results"></div>
         </section>
 
         <section class="card wide">
-          <h2>Logs</h2>
+          <h2 data-i18n="logsTitle">Logs</h2>
           <div class="tabs">
             <button data-log="ytuner" class="tab active">ytuner.log</button>
             <button data-log="proxy" class="tab">stream-proxy.log</button>
             <button data-log="admin" class="tab">admin.log</button>
-            <button id="refreshLogsBtn">Logs laden</button>
+            <button id="refreshLogsBtn" data-i18n="loadLogs">Logs laden</button>
           </div>
           <pre id="logView" class="log">Lade...</pre>
         </section>

@@ -198,21 +198,44 @@ def http_check(url: str, timeout: float = 5.0) -> dict:
     res = _try(url)
     if res.get("ok"):
         return res
-    # If localhost failed, try local interface IPs (some services bind only to container IP)
+    # If localhost failed, try local interface IPs / listener IPs (some services bind only to container IP)
     try:
         sp = urlsplit(url)
         if sp.hostname in {"127.0.0.1", "localhost"}:
+            candidates: list[str] = []
             ips = run_cmd(["sh", "-lc", "hostname -I 2>/dev/null || true"], timeout=5)
             for ip in (ips.get("stdout") or "").split():
-                if ip.startswith("127."):
-                    continue
+                if ip and not ip.startswith("127.") and ip not in candidates:
+                    candidates.append(ip)
+            # also parse listeners for the port
+            if sp.port:
+                ss = run_cmd(["sh", "-lc", f"ss -lntH '( sport = :{int(sp.port)} )' 2>/dev/null || true"], timeout=5)
+                for line in (ss.get("stdout") or "").splitlines():
+                    # format: LISTEN 0 5 192.168.50.146:80 0.0.0.0:*
+                    parts = line.split()
+                    if len(parts) >= 4:
+                        local = parts[3]
+                        # strip IPv6 brackets
+                        if local.startswith('['):
+                            host = local.rsplit(']:', 1)[0].lstrip('[')
+                        else:
+                            host = local.rsplit(':', 1)[0]
+                        if host in ('0.0.0.0', '*', '::', ''):
+                            continue
+                        if host.startswith('127.'):
+                            continue
+                        if host not in candidates:
+                            candidates.append(host)
+            for ip in candidates:
                 alt = urlunsplit((sp.scheme, f"{ip}:{sp.port}" if sp.port else ip, sp.path, sp.query, sp.fragment))
                 r2 = _try(alt)
                 if r2.get("ok"):
                     r2["fallback_from"] = url
                     return r2
-    except Exception:
-        pass
+                # keep last failure detail but note attempted fallback
+                res.setdefault("fallback_attempts", []).append({"url": alt, "error": r2.get("error"), "status": r2.get("status")})
+    except Exception as e:
+        res["fallback_error"] = str(e)
     return res
 
 

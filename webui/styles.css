@@ -30,10 +30,13 @@ input,select,textarea{padding:8px 10px;border:1px solid var(--line);border-radiu
 .matrix-wrap{display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;margin-bottom:12px}
 .test-matrix{display:grid;gap:8px;padding:12px;background:#151b16;border-radius:12px;border:1px solid #263228;width:max-content;max-width:100%}
 .lamp{width:20px;height:20px;border-radius:50%;display:inline-block;border:1px solid rgba(0,0,0,.25);box-shadow:inset 0 1px 3px rgba(255,255,255,.15)}
-.test-matrix .lamp{width:22px;height:22px}
+.test-matrix .lamp{width:22px;height:22px;padding:0;cursor:pointer}
+.test-matrix .lamp:hover{transform:scale(1.15);filter:brightness(1.1)}
+.test-matrix .lamp:focus{outline:2px solid #fff;outline-offset:2px}
 .lamp.red{background:radial-gradient(circle at 30% 30%,#ff8a80,#c62828 70%);box-shadow:0 0 4px rgba(198,40,40,.35)}
 .lamp.yellow{background:radial-gradient(circle at 30% 30%,#fff59d,#f9a825 70%);box-shadow:0 0 8px rgba(249,168,37,.7);animation:pulse 1s infinite}
 .lamp.green{background:radial-gradient(circle at 30% 30%,#a5d6a7,#2e7d32 70%);box-shadow:0 0 8px rgba(46,125,50,.7)}
+.test.flash{outline:2px solid var(--accent);box-shadow:0 0 0 4px rgba(47,111,94,.15);transition:outline-color .2s}
 @keyframes pulse{0%,100%{filter:brightness(1)}50%{filter:brightness(1.35)}}
 .matrix-legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:8px}.matrix-legend span{display:inline-flex;gap:6px;align-items:center}
 .matrix-meta{flex:1;min-width:240px}

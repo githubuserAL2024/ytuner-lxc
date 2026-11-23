@@ -84,7 +84,12 @@ function renderMatrix(){
   const m = $('#testMatrix');
   if (!m) return;
   m.style.gridTemplateColumns = `repeat(${Math.ceil(Math.sqrt(MATRIX_SIZE || 1))}, 22px)`;
-  m.innerHTML = matrixState.map((s,i)=>`<span class="lamp ${s}" title="Test ${i+1}: ${s}"></span>`).join('');
+  m.innerHTML = matrixState.map((s,i)=>`<button type="button" class="lamp ${s}" data-test-idx="${i}" title="Test ${i+1}: ${s} - klicken zum Springen"></button>`).join('');
+  m.querySelectorAll('.lamp[data-test-idx]').forEach(btn=>btn.addEventListener('click', ()=>{
+    const idx = +btn.dataset.testIdx;
+    const el = document.getElementById(`test-row-${idx}`);
+    if (el) { el.scrollIntoView({behavior:'smooth', block:'center'}); el.classList.add('flash'); setTimeout(()=>el.classList.remove('flash'), 1200); }
+  }));
   const label = $('#matrixStatus');
   if (label && !matrixState.length) label.textContent = 'Keine Tests geladen.';
 }
@@ -114,7 +119,7 @@ async function runTests(){
 }
 function renderTests(d){
   $('#testSummary').innerHTML = `${badge(d.ok, d.ok?'PASS':'FAIL')} ${d.passed}/${d.total} bestanden, ${d.failed} fehlgeschlagen`;
-  $('#testResults').innerHTML = (d.results||[]).map((r,i)=>`<div class="test"><div class="head"><span>${i+1}. ${esc(r.name)}</span>${badge(r.ok,r.ok?'ok':'fail')}</div><pre>${esc(JSON.stringify(r.detail, null, 2))}</pre></div>`).join('');
+  $('#testResults').innerHTML = (d.results||[]).map((r,i)=>`<div class="test" id="test-row-${i}"><div class="head"><span>${i+1}. ${esc(r.name)}</span>${badge(r.ok,r.ok?'ok':'fail')}</div><pre>${esc(JSON.stringify(r.detail, null, 2))}</pre></div>`).join('');
   applyMatrixResults(d.results||[]);
 }
 

@@ -51,6 +51,21 @@
         <section class="card wide">
           <div class="section-head">
             <div>
+              <h2 data-i18n="rbTitle">Radio-Browser durchsuchen</h2>
+              <p class="muted small" data-i18n="rbHelp">Suche im Radio-Browser und übernehme Sender direkt in "My Stations".</p>
+            </div>
+            <div class="actions">
+              <input id="rbQuery" placeholder="z.B. jazz, rock, nrw..." style="min-width:220px">
+              <button type="button" id="rbSearchBtn" class="primary" data-i18n="rbSearch">Suchen</button>
+            </div>
+          </div>
+          <div id="rbResults" class="list"></div>
+          <pre id="rbStatus" class="result muted"></pre>
+        </section>
+
+        <section class="card wide">
+          <div class="section-head">
+            <div>
               <h2 data-i18n="stationsTitle">Senderliste / Ordnerstruktur (stations.ini)</h2>
               <p class="muted small" data-i18n="stationsHelp">Ordner (Gruppen) und Sender für "My Stations" pflegen. Nach dem Speichern liest YTuner die Datei je nach Einstellung neu ein (ggf. Service neu starten).</p>
             </div>

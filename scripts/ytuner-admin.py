@@ -497,6 +497,41 @@ def save_ytuner_sources(payload: dict) -> dict:
     return {"ok": True, "changed": True, "updates": changed, "config": get_ytuner_sources()["config"]}
 
 
+def radiobrowser_search(query: str, limit: int = 20) -> dict:
+    q = (query or "").strip()
+    if not q:
+        return {"ok": False, "error": "missing query"}
+    limit = max(1, min(int(limit or 20), 50))
+    yt = read_text(YTUNER_INI)
+    base = ini_get(yt, "Radiobrowser", "RBAPIURL", "http://all.api.radio-browser.info").strip().rstrip("/")
+    if not re.match(r'^https?://', base, re.I):
+        base = "http://all.api.radio-browser.info"
+    from urllib.parse import urlencode
+    from urllib.request import Request, urlopen
+    url = f"{base}/json/stations/search?{urlencode({'name': q, 'limit': str(limit), 'hidebroken': 'true', 'order': 'clickcount', 'reverse': 'true'})}"
+    req = Request(url, headers={"User-Agent": "ytuner-admin/0.2"})
+    try:
+        with urlopen(req, timeout=12) as resp:
+            data = json.loads(resp.read().decode("utf-8", errors="replace"))
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc), "query": q, "base": base}
+    out = []
+    for s in data if isinstance(data, list) else []:
+        out.append({
+            "name": str(s.get("name") or "").strip(),
+            "url": str(s.get("url_resolved") or s.get("url") or "").strip(),
+            "homepage": str(s.get("homepage") or "").strip(),
+            "favicon": str(s.get("favicon") or "").strip(),
+            "country": str(s.get("country") or "").strip(),
+            "codec": str(s.get("codec") or "").strip(),
+            "bitrate": s.get("bitrate"),
+            "votes": s.get("votes"),
+            "clickcount": s.get("clickcount"),
+            "tags": str(s.get("tags") or "").strip(),
+        })
+    return {"ok": True, "query": q, "base": base, "results": out}
+
+
 def run_tests() -> dict:
     cfg = collect_config()
     proxy_port = int(cfg["proxy"].get("port", "8090") or "8090")
@@ -645,6 +680,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(200, {"ok": True, **result})
             except Exception as exc:  # noqa: BLE001
                 self._send_json(200, {"ok": True, "url": url, "reachable": False, "error": str(exc)})
+            return
+        if path == "/api/radiobrowser/search":
+            qs = parse_qs(parsed.query)
+            q = (qs.get("q") or [""])[0].strip()
+            limit = int((qs.get("limit") or ["20"])[0] or "20")
+            self._send_json(200, radiobrowser_search(q, limit))
             return
         if path == "/api/logs":
             qs = parse_qs(parsed.query)

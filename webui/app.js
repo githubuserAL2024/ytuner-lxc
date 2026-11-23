@@ -2,6 +2,15 @@
 /* ---- i18n ---- */
 const I18N = {
   de: {
+    rbTitle:'Radio-Browser durchsuchen',
+    rbHelp:'Suche im Radio-Browser und übernehme Sender direkt in "My Stations".',
+    rbSearch:'Suchen',
+    rbEnterQuery:'Suchbegriff eingeben.',
+    rbHits:'Treffer',
+    rbNoHits:'Keine Treffer.',
+    rbAdd:'Zu My Stations',
+    rbAdded:'Hinzugefügt (noch speichern!)',
+
     refresh:'Aktualisieren', subtitle:'Weboberfläche für YTuner, Stream-Proxy und Diagnose',
     tabStations:'1. Radiosender pflegen', tabAdmin:'2. Administration / Tests',
     sourcesTitle:'YTuner-Quellen / Überbleibsel', sourcesHelp:'Steuert, welche Quellen der AVR im YTuner-Menü sieht. "Überbleibsel" kommen oft aus Radio-Browser/Bookmarks/alten Stations-Dateien oder vTuner-Kategorien.',
@@ -20,6 +29,15 @@ const I18N = {
     updated:'Aktualisiert', apiOk:'API ok', error:'Fehler', noConfigFiles:'Keine Konfigdateien gefunden.', saveStations:'Speichere stations.ini...', saved:'Gespeichert', rawSaved:'Raw gespeichert',
   },
   en: {
+    rbTitle:'Search Radio-Browser',
+    rbHelp:'Search Radio-Browser and add stations directly to "My Stations".',
+    rbSearch:'Search',
+    rbEnterQuery:'Enter a search query.',
+    rbHits:'hits',
+    rbNoHits:'No results.',
+    rbAdd:'Add to My Stations',
+    rbAdded:'Added (save still required!)',
+
     refresh:'Refresh', subtitle:'Web interface for YTuner, stream proxy and diagnostics',
     tabStations:'1. Manage radio stations', tabAdmin:'2. Administration / Tests',
     sourcesTitle:'YTuner sources / leftovers', sourcesHelp:'Controls which sources appear in the AVR YTuner menu. “Leftovers” often come from Radio-Browser/Bookmarks/old station files or vTuner categories.',
@@ -65,6 +83,29 @@ $$('.main-tab').forEach(btn=>btn.addEventListener('click', ()=>{
   btn.classList.add('active');
   $('#tab-' + btn.dataset.tab).classList.add('active');
 }));
+
+/* ---- Radio Browser ---- */
+async function searchRadioBrowser(){
+  const q = ($('#rbQuery').value||'').trim();
+  if (!q) { $('#rbStatus').textContent = t('rbEnterQuery'); return; }
+  $('#rbStatus').textContent = t('saving').replace('Speichere...','Suche...').replace('Saving...','Searching...');
+  $('#rbResults').innerHTML = '';
+  try {
+    const d = await api('/api/radiobrowser/search?q='+encodeURIComponent(q)+'&limit=20');
+    if (!d.ok) throw new Error(d.error||'search failed');
+    const res = d.results||[];
+    $('#rbStatus').textContent = `${res.length} ${t('rbHits')} (${d.base})`;
+    $('#rbResults').innerHTML = res.map((r,i)=>`<div class="item"><div style="min-width:0"><strong>${esc(r.name||'(no name)')}</strong><div class="muted small">${esc([r.country,r.codec,r.bitrate? r.bitrate+'k':'',r.tags].filter(Boolean).join(' | '))}</div><div class="muted small" style="overflow:hidden;text-overflow:ellipsis">${esc(r.url||'')}</div></div><div class="actions"><button type="button" data-rb-add="${i}">${esc(t('rbAdd'))}</button></div></div>`).join('') || `<div class="muted">${t('rbNoHits')}</div>`;
+    $('#rbResults').querySelectorAll('[data-rb-add]').forEach(btn=>btn.addEventListener('click', ()=>{
+      const r = res[+btn.dataset.rbAdd]; if(!r) return;
+      collectStationsFromEditor();
+      if(!stationsModel.length) stationsModel=[{name:'My Stations',stations:[]}];
+      stationsModel[0].stations.push({name:r.name||'', url:r.url||'', logo:r.favicon||'', _status:null});
+      renderStationsEditor();
+      $('#stationsSaveResult').textContent = t('rbAdded') + ': ' + (r.name||r.url||'');
+    }));
+  } catch(e){ $('#rbStatus').textContent = t('error')+': '+e.message; }
+}
 
 /* ---- Sources / leftovers ---- */
 async function loadSources(){
@@ -321,6 +362,8 @@ $('#reloadStationsBtn').addEventListener('click', loadStations);
 $('#checkAllStationsBtn').addEventListener('click', checkAllStations);
 $('#reloadSourcesBtn').addEventListener('click', ()=>loadSources().catch(e=>$('#sourcesResult').textContent=e.message));
 $('#saveSourcesBtn').addEventListener('click', saveSources);
+$('#rbSearchBtn').addEventListener('click', searchRadioBrowser);
+$('#rbQuery').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); searchRadioBrowser(); } });
 
 /* ---- Logs ---- */
 let currentLog='ytuner';

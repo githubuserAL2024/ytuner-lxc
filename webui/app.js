@@ -18,6 +18,35 @@ $$('.main-tab').forEach(btn=>btn.addEventListener('click', ()=>{
   $('#tab-' + btn.dataset.tab).classList.add('active');
 }));
 
+/* ---- Sources / leftovers ---- */
+async function loadSources(){
+  const d = await api('/api/config/ytuner-sources');
+  const c = d.config || {};
+  $('#sourcesForm').innerHTML = `
+    <label><input type="checkbox" id="srcRadiobrowser" ${String(c.radiobrowser_enable)==='0'?'':'checked'}> Radio-Browser aktiv (viele Kategorien/Sender)</label>
+    <label><input type="checkbox" id="srcBookmarks" ${String(c.bookmark_enable)==='0'?'':'checked'}> Bookmarks aktiv</label>
+    <label><input type="checkbox" id="srcMyStations" ${String(c.mystations_enable)==='0'?'':'checked'}> My Stations aktiv (stations.ini/yaml)</label>
+    <label>MyStations-Datei <input id="srcMyStationsFile" value="${esc(c.mystations_file||'stations.ini')}" style="max-width:260px"></label>
+  `;
+  const files = d.files || [];
+  $('#sourcesFiles').innerHTML = files.map(f=>`<div class="item"><div><strong>${esc(f.name)}</strong><div class="muted small">${esc(f.kind)} | ${esc(f.size)} B | ${esc(f.path)}</div></div><div class="muted small">${new Date((f.mtime||0)*1000).toLocaleString()}</div></div>`).join('') || '<div class="muted">Keine Konfigdateien gefunden.</div>';
+  $('#sourcesResult').textContent = `Geladen: ${d.ytuner_ini}`;
+}
+async function saveSources(){
+  const payload = {
+    radiobrowser_enable: $('#srcRadiobrowser').checked ? '1':'0',
+    bookmark_enable: $('#srcBookmarks').checked ? '1':'0',
+    mystations_enable: $('#srcMyStations').checked ? '1':'0',
+    mystations_file: $('#srcMyStationsFile').value.trim() || 'stations.ini',
+  };
+  $('#sourcesResult').textContent = 'Speichere...';
+  try {
+    const d = await api('/api/config/ytuner-sources', {method:'POST', body:JSON.stringify(payload)});
+    $('#sourcesResult').textContent = JSON.stringify(d, null, 2);
+    await loadStatus();
+  } catch(e){ $('#sourcesResult').textContent = JSON.stringify(e.data||{error:e.message}, null, 2); }
+}
+
 /* ---- Status / Config ---- */
 async function loadStatus(){
   const d = await api('/api/status');
@@ -242,6 +271,8 @@ $('#saveStationsBtn').addEventListener('click', ()=>saveStations(collectStations
 $('#saveStationsRawBtn').addEventListener('click', ()=>saveStations(null));
 $('#reloadStationsBtn').addEventListener('click', loadStations);
 $('#checkAllStationsBtn').addEventListener('click', checkAllStations);
+$('#reloadSourcesBtn').addEventListener('click', ()=>loadSources().catch(e=>$('#sourcesResult').textContent=e.message));
+$('#saveSourcesBtn').addEventListener('click', saveSources);
 
 /* ---- Logs ---- */
 let currentLog='ytuner';
@@ -264,4 +295,5 @@ $$('.tab[data-log]').forEach(b=>b.addEventListener('click', ()=>loadLogs(b.datas
 renderMatrix();
 loadStatus().catch(e=>$('#statusSummary').textContent='Fehler: '+e.message);
 loadStations().catch(()=>{});
+loadSources().catch(()=>{});
 loadLogs('ytuner').catch(()=>{});

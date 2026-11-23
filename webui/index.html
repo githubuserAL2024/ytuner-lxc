@@ -29,6 +29,22 @@
         <section class="card wide">
           <div class="section-head">
             <div>
+              <h2>YTuner-Quellen / Überbleibsel</h2>
+              <p class="muted small">Steuert, welche Quellen der AVR im YTuner-Menü sieht. "Überbleibsel" kommen meist aus Radio-Browser/Bookmarks/alten Stations-Dateien.</p>
+            </div>
+            <div class="actions">
+              <button type="button" id="reloadSourcesBtn">Neu laden</button>
+              <button type="button" id="saveSourcesBtn" class="primary">Quellen speichern</button>
+            </div>
+          </div>
+          <div id="sourcesForm" class="sources-form"></div>
+          <div id="sourcesFiles" class="list" style="margin-top:10px"></div>
+          <pre id="sourcesResult" class="result muted"></pre>
+        </section>
+
+        <section class="card wide">
+          <div class="section-head">
+            <div>
               <h2>Senderliste / Ordnerstruktur (stations.ini)</h2>
               <p class="muted small">Ordner (Gruppen) und Sender für "My Stations" pflegen. Nach dem Speichern liest YTuner die Datei je nach Einstellung neu ein (ggf. Service neu starten).</p>
             </div>

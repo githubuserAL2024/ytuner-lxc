@@ -88,6 +88,37 @@ def ini_get(content: str, section: str, key: str, default: str = "") -> str:
     return default
 
 
+def ini_set(content: str, section: str, key: str, value: str) -> str:
+    lines = content.splitlines()
+    sec_re = re.compile(r"^\s*\[(.+?)\]\s*$")
+    kv_re = re.compile(r"^(\s*)([^;#=\s][^=]*?)(\s*=\s*)(.*?)(\s*)$")
+    target = section.lower()
+    cur = None
+    sec_start = None
+    sec_end = len(lines)
+    for i, line in enumerate(lines):
+        m = sec_re.match(line)
+        if m:
+            if cur == target:
+                sec_end = i
+                break
+            cur = m.group(1).strip().lower()
+            if cur == target:
+                sec_start = i
+    if sec_start is None:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines.extend([f"[{section}]", f"{key}={value}"])
+        return "\n".join(lines).rstrip() + "\n"
+    for i in range(sec_start + 1, sec_end):
+        km = kv_re.match(lines[i])
+        if km and km.group(2).strip().lower() == key.lower():
+            lines[i] = f"{km.group(1)}{km.group(2)}{km.group(3)}{value}{km.group(5)}"
+            return "\n".join(lines).rstrip() + "\n"
+    lines.insert(sec_end, f"{key}={value}")
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def env_parse(content: str) -> dict[str, str]:
     out: dict[str, str] = {}
     for line in content.splitlines():
@@ -361,7 +392,11 @@ def collect_config() -> dict:
             "dns_port": ini_get(ytuner, "DNSServer", "DNSServerPort", "53"),
             "dns_enable": ini_get(ytuner, "DNSServer", "Enable", "1"),
             "intercept_dns": ini_get(ytuner, "DNSServer", "InterceptDNs", ""),
+            "rb_enable": ini_get(ytuner, "Radiobrowser", "Enable", "1"),
             "rb_cache_type": ini_get(ytuner, "Radiobrowser", "RBCacheType", ""),
+            "bookmark_enable": ini_get(ytuner, "Bookmark", "Enable", "1"),
+            "mystations_enable": ini_get(ytuner, "MyStations", "Enable", "1"),
+            "mystations_file": ini_get(ytuner, "MyStations", "MyStationsFile", "stations.ini"),
             "message_level": ini_get(ytuner, "Configuration", "MessageInfoLevel", ""),
         },
         "avr": {
@@ -402,6 +437,64 @@ def save_proxy_env(payload: dict) -> dict:
     new_content = env_render(content, updates)
     write_text_atomic(PROXY_ENV, new_content)
     return {"saved": True, "path": str(PROXY_ENV), "updates": updates}
+
+
+def _bool01(v, default="1") -> str:
+    s = str(v).strip().lower()
+    if s in {"1","true","yes","on","enabled"}: return "1"
+    if s in {"0","false","no","off","disabled"}: return "0"
+    return default
+
+
+def get_ytuner_sources() -> dict:
+    yt = read_text(YTUNER_INI)
+    cfg = {
+        "radiobrowser_enable": ini_get(yt, "Radiobrowser", "Enable", "1"),
+        "bookmark_enable": ini_get(yt, "Bookmark", "Enable", "1"),
+        "mystations_enable": ini_get(yt, "MyStations", "Enable", "1"),
+        "mystations_file": ini_get(yt, "MyStations", "MyStationsFile", "stations.ini"),
+    }
+    # detect possible leftover/custom station files in config dir
+    files = []
+    for p in sorted(CONFIG_DIR.glob("*")):
+        if not p.is_file():
+            continue
+        if p.suffix.lower() not in {".ini", ".yaml", ".yml", ".xml", ".db", ".sqlite", ".sqlite3"}:
+            continue
+        files.append({
+            "name": p.name,
+            "path": str(p),
+            "size": p.stat().st_size,
+            "mtime": int(p.stat().st_mtime),
+            "kind": "stations" if "station" in p.name.lower() else ("bookmark" if "bookmark" in p.name.lower() else ("cache" if p.suffix.lower() in {".db",".sqlite",".sqlite3"} else "config")),
+        })
+    return {"ok": True, "config": cfg, "files": files, "ytuner_ini": str(YTUNER_INI), "config_dir": str(CONFIG_DIR)}
+
+
+def save_ytuner_sources(payload: dict) -> dict:
+    yt = read_text(YTUNER_INI)
+    if not yt and not YTUNER_INI.exists():
+        raise ValueError(f"ytuner.ini not found: {YTUNER_INI}")
+    changed = {}
+    if "radiobrowser_enable" in payload:
+        changed["Radiobrowser.Enable"] = _bool01(payload["radiobrowser_enable"], "1")
+        yt = ini_set(yt, "Radiobrowser", "Enable", changed["Radiobrowser.Enable"])
+    if "bookmark_enable" in payload:
+        changed["Bookmark.Enable"] = _bool01(payload["bookmark_enable"], "1")
+        yt = ini_set(yt, "Bookmark", "Enable", changed["Bookmark.Enable"])
+    if "mystations_enable" in payload:
+        changed["MyStations.Enable"] = _bool01(payload["mystations_enable"], "1")
+        yt = ini_set(yt, "MyStations", "Enable", changed["MyStations.Enable"])
+    if "mystations_file" in payload:
+        mf = str(payload["mystations_file"]).strip() or "stations.ini"
+        if "/" in mf or "\\" in mf or not re.match(r"^[A-Za-z0-9._-]+$", mf):
+            raise ValueError("invalid mystations_file")
+        changed["MyStations.MyStationsFile"] = mf
+        yt = ini_set(yt, "MyStations", "MyStationsFile", mf)
+    if not changed:
+        return {"ok": True, "changed": False, "config": get_ytuner_sources()["config"]}
+    write_text_atomic(YTUNER_INI, yt)
+    return {"ok": True, "changed": True, "updates": changed, "config": get_ytuner_sources()["config"]}
 
 
 def run_tests() -> dict:
@@ -534,6 +627,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/config":
             self._send_json(200, {"ok": True, "config": collect_config()})
             return
+        if path == "/api/config/ytuner-sources":
+            self._send_json(200, get_ytuner_sources())
+            return
         if path == "/api/stations":
             content = read_text(STATIONS_INI)
             self._send_json(200, {"ok": True, "path": str(STATIONS_INI), "groups": parse_stations_ini(content), "raw": content})
@@ -584,6 +680,13 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 res = save_proxy_env(payload)
                 self._send_json(200, {"ok": True, **res})
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(400, {"ok": False, "error": str(exc)})
+            return
+        if path == "/api/config/ytuner-sources":
+            try:
+                res = save_ytuner_sources(payload)
+                self._send_json(200, res)
             except Exception as exc:  # noqa: BLE001
                 self._send_json(400, {"ok": False, "error": str(exc)})
             return

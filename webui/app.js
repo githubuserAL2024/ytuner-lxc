@@ -73,48 +73,48 @@ async function restartProxy(){
 }
 
 /* ---- Tests ---- */
-const MATRIX_SIZE = 49; // 7x7
-let matrixState = Array(MATRIX_SIZE).fill('red');
+let MATRIX_SIZE = 0;
+let matrixState = [];
+function setMatrixSize(n){
+  MATRIX_SIZE = Math.max(0, n|0);
+  matrixState = Array(MATRIX_SIZE).fill('red');
+  renderMatrix();
+}
 function renderMatrix(){
   const m = $('#testMatrix');
   if (!m) return;
-  m.innerHTML = matrixState.map((s,i)=>`<span class="lamp ${s}" title="Slot ${i+1}: ${s}"></span>`).join('');
+  m.style.gridTemplateColumns = `repeat(${Math.ceil(Math.sqrt(MATRIX_SIZE || 1))}, 22px)`;
+  m.innerHTML = matrixState.map((s,i)=>`<span class="lamp ${s}" title="Test ${i+1}: ${s}"></span>`).join('');
+  const label = $('#matrixStatus');
+  if (label && !matrixState.length) label.textContent = 'Keine Tests geladen.';
 }
-function setMatrixAll(state){ matrixState = Array(MATRIX_SIZE).fill(state); renderMatrix(); }
-function setMatrixRunning(count){
-  const n = Math.max(0, Math.min(MATRIX_SIZE, count|0));
-  matrixState = Array(MATRIX_SIZE).fill('red').map((_,i)=> i < n ? 'yellow' : 'red');
-  renderMatrix();
-}
+function setMatrixAll(state){ if (MATRIX_SIZE) { matrixState = Array(MATRIX_SIZE).fill(state); renderMatrix(); } }
 function applyMatrixResults(results){
-  const n = Math.max(0, Math.min(MATRIX_SIZE, (results||[]).length));
-  matrixState = Array(MATRIX_SIZE).fill('red').map((_,i)=> {
-    if (i >= n) return 'red';
-    return results[i].ok ? 'green' : 'red';
-  });
+  const res = results || [];
+  if (res.length !== MATRIX_SIZE) setMatrixSize(res.length);
+  matrixState = res.map(r => r.ok ? 'green' : 'red');
   renderMatrix();
-  const extra = (results||[]).length > MATRIX_SIZE ? ` (zeigt erste ${MATRIX_SIZE} von ${results.length})` : '';
-  $('#matrixStatus').textContent = `49 Slots (7x7). ${n} Tests gemappt${extra}.`;
+  $('#matrixStatus').textContent = `${MATRIX_SIZE} Tests: ${res.filter(r=>r.ok).length} grün, ${res.filter(r=>!r.ok).length} rot.`;
 }
 async function runTests(){
   $('#testSummary').textContent = 'Tests laufen...';
   $('#testResults').innerHTML = '';
   // optimistic: show all yellow while request is running
-  setMatrixAll('yellow');
-  $('#matrixStatus').textContent = '49 Slots (7x7). Tests laufen...';
+  if (MATRIX_SIZE > 0) { setMatrixAll('yellow'); $('#matrixStatus').textContent = `${MATRIX_SIZE} Tests laufen...`; }
+  else { $('#matrixStatus').textContent = 'Tests laufen...'; }
   try {
     const d = await api('/api/tests/run', {method:'POST'});
     renderTests(d);
   }
   catch(e){
-    setMatrixAll('red');
-    $('#matrixStatus').textContent = '49 Slots (7x7). Testlauf fehlgeschlagen.';
+    if (MATRIX_SIZE > 0) setMatrixAll('red');
+    $('#matrixStatus').textContent = MATRIX_SIZE ? `${MATRIX_SIZE} Tests: Lauf fehlgeschlagen.` : 'Testlauf fehlgeschlagen.';
     $('#testSummary').textContent = 'Fehler: ' + e.message;
   }
 }
 function renderTests(d){
   $('#testSummary').innerHTML = `${badge(d.ok, d.ok?'PASS':'FAIL')} ${d.passed}/${d.total} bestanden, ${d.failed} fehlgeschlagen`;
-  $('#testResults').innerHTML = (d.results||[]).map(r=>`<div class="test"><div class="head"><span>${esc(r.name)}</span>${badge(r.ok,r.ok?'ok':'fail')}</div><pre>${esc(JSON.stringify(r.detail, null, 2))}</pre></div>`).join('');
+  $('#testResults').innerHTML = (d.results||[]).map((r,i)=>`<div class="test"><div class="head"><span>${i+1}. ${esc(r.name)}</span>${badge(r.ok,r.ok?'ok':'fail')}</div><pre>${esc(JSON.stringify(r.detail, null, 2))}</pre></div>`).join('');
   applyMatrixResults(d.results||[]);
 }
 

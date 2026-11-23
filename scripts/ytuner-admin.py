@@ -152,33 +152,68 @@ def port_check(port: int, host: str = "127.0.0.1") -> dict:
     try:
         s.connect((host, port))
         s.close()
-        return {"port": port, "open": True}
+        return {"port": port, "open": True, "host": host}
     except Exception as exc:  # noqa: BLE001
-        return {"port": port, "open": False, "error": str(exc)}
+        err = str(exc)
     finally:
         try:
             s.close()
         except Exception:
             pass
 
+    # Fallback for containerized/bound-to-non-loopback listeners: inspect ss/netstat.
+    ss = run_cmd(["sh", "-lc", f"ss -lntH '( sport = :{int(port)} )' 2>/dev/null | head -n 1"], timeout=5)
+    line = (ss.get("stdout") or "").strip()
+    if ss.get("ok") and line:
+        return {"port": port, "open": True, "host": host, "via": "ss", "listener": line}
+
+    ns = run_cmd(["sh", "-lc", f"netstat -lnt 2>/dev/null | awk '$4 ~ /:{int(port)}$/' | head -n 1"], timeout=5)
+    nline = (ns.get("stdout") or "").strip()
+    if ns.get("ok") and nline:
+        return {"port": port, "open": True, "host": host, "via": "netstat", "listener": nline}
+
+    return {"port": port, "open": False, "error": err, "host": host}
+
 
 def http_check(url: str, timeout: float = 5.0) -> dict:
     from urllib.request import Request, urlopen
+    from urllib.parse import urlsplit, urlunsplit
 
-    req = Request(url, headers={"User-Agent": "ytuner-admin/0.1"})
-    t0 = time.time()
+    def _try(u: str) -> dict:
+        req = Request(u, headers={"User-Agent": "ytuner-admin/0.1"})
+        t0 = time.time()
+        try:
+            with urlopen(req, timeout=timeout) as resp:
+                body = resp.read(512)
+                return {
+                    "url": u,
+                    "ok": 200 <= getattr(resp, "status", 200) < 500,
+                    "status": getattr(resp, "status", 200),
+                    "ms": int((time.time() - t0) * 1000),
+                    "bytes": len(body),
+                }
+        except Exception as exc:  # noqa: BLE001
+            return {"url": u, "ok": False, "error": str(exc), "ms": int((time.time() - t0) * 1000)}
+
+    res = _try(url)
+    if res.get("ok"):
+        return res
+    # If localhost failed, try local interface IPs (some services bind only to container IP)
     try:
-        with urlopen(req, timeout=timeout) as resp:
-            body = resp.read(512)
-            return {
-                "url": url,
-                "ok": 200 <= getattr(resp, "status", 200) < 500,
-                "status": getattr(resp, "status", 200),
-                "ms": int((time.time() - t0) * 1000),
-                "bytes": len(body),
-            }
-    except Exception as exc:  # noqa: BLE001
-        return {"url": url, "ok": False, "error": str(exc), "ms": int((time.time() - t0) * 1000)}
+        sp = urlsplit(url)
+        if sp.hostname in {"127.0.0.1", "localhost"}:
+            ips = run_cmd(["sh", "-lc", "hostname -I 2>/dev/null || true"], timeout=5)
+            for ip in (ips.get("stdout") or "").split():
+                if ip.startswith("127."):
+                    continue
+                alt = urlunsplit((sp.scheme, f"{ip}:{sp.port}" if sp.port else ip, sp.path, sp.query, sp.fragment))
+                r2 = _try(alt)
+                if r2.get("ok"):
+                    r2["fallback_from"] = url
+                    return r2
+    except Exception:
+        pass
+    return res
 
 
 def check_stream_url(url: str, timeout: float = 6.0) -> dict:

@@ -28,7 +28,7 @@ input,select,textarea{padding:8px 10px;border:1px solid var(--line);border-radiu
 .result,.log{background:#1a211b;color:#dce7dc;padding:12px;border-radius:10px;overflow:auto;font-family:var(--mono);font-size:.85rem;line-height:1.45}
 .log{min-height:260px;max-height:420px}.result{min-height:44px;margin-top:10px}
 .matrix-wrap{display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;margin-bottom:12px}
-.test-matrix{display:grid;grid-template-columns:repeat(7,22px);gap:8px;padding:12px;background:#151b16;border-radius:12px;border:1px solid #263228;width:max-content}
+.test-matrix{display:grid;gap:8px;padding:12px;background:#151b16;border-radius:12px;border:1px solid #263228;width:max-content;max-width:100%}
 .lamp{width:20px;height:20px;border-radius:50%;display:inline-block;border:1px solid rgba(0,0,0,.25);box-shadow:inset 0 1px 3px rgba(255,255,255,.15)}
 .test-matrix .lamp{width:22px;height:22px}
 .lamp.red{background:radial-gradient(circle at 30% 30%,#ff8a80,#c62828 70%);box-shadow:0 0 4px rgba(198,40,40,.35)}

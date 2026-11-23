@@ -3,6 +3,7 @@
 .topbar{display:flex;justify-content:space-between;gap:16px;padding:24px 24px 8px;align-items:flex-end}
 h1{margin:0;font-size:2rem;letter-spacing:-.02em}h2{margin:0 0 12px;font-size:1.05rem}
 .muted{color:var(--muted)}.small{font-size:.88rem}
+.version-tag{font-size:.55em;font-weight:600;color:var(--muted);vertical-align:middle;margin-left:6px}
 .main-tabs{display:flex;gap:8px;padding:0 24px 16px;border-bottom:1px solid var(--line)}
 .main-tab{padding:10px 14px;border-radius:10px;border:1px solid var(--line);background:#fff;cursor:pointer;font:inherit;font-weight:600}
 .main-tab.active{background:var(--accent);color:#fff;border-color:var(--accent)}

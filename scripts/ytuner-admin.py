@@ -180,6 +180,7 @@ def http_check(url: str, timeout: float = 5.0) -> dict:
     from urllib.parse import urlsplit, urlunsplit
 
     def _try(u: str) -> dict:
+        from urllib.error import HTTPError
         req = Request(u, headers={"User-Agent": "ytuner-admin/0.1"})
         t0 = time.time()
         try:
@@ -187,11 +188,26 @@ def http_check(url: str, timeout: float = 5.0) -> dict:
                 body = resp.read(512)
                 return {
                     "url": u,
-                    "ok": 200 <= getattr(resp, "status", 200) < 500,
+                    "ok": 200 <= getattr(resp, "status", 200) < 600,
                     "status": getattr(resp, "status", 200),
                     "ms": int((time.time() - t0) * 1000),
                     "bytes": len(body),
                 }
+        except HTTPError as exc:
+            # HTTP response means service is reachable; 404 is acceptable for root endpoint
+            body = b""
+            try:
+                body = exc.read(512)
+            except Exception:
+                pass
+            return {
+                "url": u,
+                "ok": 200 <= int(getattr(exc, "code", 0) or 0) < 600,
+                "status": int(getattr(exc, "code", 0) or 0),
+                "ms": int((time.time() - t0) * 1000),
+                "bytes": len(body),
+                "error": str(exc),
+            }
         except Exception as exc:  # noqa: BLE001
             return {"url": u, "ok": False, "error": str(exc), "ms": int((time.time() - t0) * 1000)}
 

@@ -1,5 +1,8 @@
 # YTuner Proxmox LXC Rollout
 
+> English: [README.en.md](README.en.md)
+
+
 Dieses Repository enthält ein vollständiges, praxisnahes Rollout-Paket, um [YTuner](https://github.com/coffeegreg/YTuner) als **vTuner-Ersatz** in einem **Proxmox VE LXC-Container** zu betreiben. Ziel ist ein reproduzierbarer Setup-Weg: Container anlegen, YTuner installieren, AVR-DNS umstellen, Betrieb prüfen.
 
 ## Inhaltsverzeichnis

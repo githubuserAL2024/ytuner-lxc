@@ -1,5 +1,8 @@
 # AVR Setup for YTuner
 
+> English: [AVR-SETUP.en.md](AVR-SETUP.en.md)
+
+
 This guide covers the network/AVR side after YTuner is running in the LXC.
 
 ## 0. Know the ports

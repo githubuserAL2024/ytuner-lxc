@@ -3,6 +3,7 @@
 const I18N = {
   de: {
     rbTitle:'Radio-Browser durchsuchen',
+    rbTargetGroup:'Zielordner',
     rbHelp:'Suche im Radio-Browser und übernehme Sender direkt in "My Stations".',
     rbSearch:'Suchen',
     rbEnterQuery:'Suchbegriff eingeben.',
@@ -30,6 +31,7 @@ const I18N = {
   },
   en: {
     rbTitle:'Search Radio-Browser',
+    rbTargetGroup:'Target folder',
     rbHelp:'Search Radio-Browser and add stations directly to "My Stations".',
     rbSearch:'Search',
     rbEnterQuery:'Enter a search query.',
@@ -95,14 +97,19 @@ async function searchRadioBrowser(){
     if (!d.ok) throw new Error(d.error||'search failed');
     const res = d.results||[];
     $('#rbStatus').textContent = `${res.length} ${t('rbHits')} (${d.base})`;
-    $('#rbResults').innerHTML = res.map((r,i)=>`<div class="item"><div style="min-width:0"><strong>${esc(r.name||'(no name)')}</strong><div class="muted small">${esc([r.country,r.codec,r.bitrate? r.bitrate+'k':'',r.tags].filter(Boolean).join(' | '))}</div><div class="muted small" style="overflow:hidden;text-overflow:ellipsis">${esc(r.url||'')}</div></div><div class="actions"><button type="button" data-rb-add="${i}">${esc(t('rbAdd'))}</button></div></div>`).join('') || `<div class="muted">${t('rbNoHits')}</div>`;
+    collectStationsFromEditor();
+    const groupOpts = stationsModel.map((g,i)=>`<option value="${i}">${esc(g.name||('Group '+(i+1)))}</option>`).join('');
+    $('#rbResults').innerHTML = res.map((r,i)=>`<div class="item"><div style="min-width:0"><strong>${esc(r.name||'(no name)')}</strong><div class="muted small">${esc([r.country,r.codec,r.bitrate? r.bitrate+'k':'',r.tags].filter(Boolean).join(' | '))}</div><div class="muted small" style="overflow:hidden;text-overflow:ellipsis">${esc(r.url||'')}</div></div><div class="actions"><select id="rb-group-${i}" title="${esc(t('rbTargetGroup'))}">${groupOpts}</select><button type="button" data-rb-add="${i}">${esc(t('rbAdd'))}</button></div></div>`).join('') || `<div class="muted">${t('rbNoHits')}</div>`;
     $('#rbResults').querySelectorAll('[data-rb-add]').forEach(btn=>btn.addEventListener('click', ()=>{
       const r = res[+btn.dataset.rbAdd]; if(!r) return;
       collectStationsFromEditor();
       if(!stationsModel.length) stationsModel=[{name:'My Stations',stations:[]}];
-      stationsModel[0].stations.push({name:r.name||'', url:r.url||'', logo:r.favicon||'', _status:null});
+      const sel = document.getElementById(`rb-group-${+btn.dataset.rbAdd}`);
+      let gi = sel ? parseInt(sel.value,10) : 0;
+      if (!(gi>=0 && gi<stationsModel.length)) gi = 0;
+      stationsModel[gi].stations.push({name:r.name||'', url:r.url||'', logo:r.favicon||'', _status:null});
       renderStationsEditor();
-      $('#stationsSaveResult').textContent = t('rbAdded') + ': ' + (r.name||r.url||'');
+      $('#stationsSaveResult').textContent = t('rbAdded') + ' → ' + (stationsModel[gi].name||'') + ': ' + (r.name||r.url||'');
     }));
   } catch(e){ $('#rbStatus').textContent = t('error')+': '+e.message; }
 }

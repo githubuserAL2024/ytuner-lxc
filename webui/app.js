@@ -129,6 +129,11 @@ function normalizeStations(groups){
   if (!Array.isArray(groups) || !groups.length) return [{name:'My Stations', stations:[]}];
   return groups.map(g=>({name: String(g?.name||'Ungrouped'), stations: Array.isArray(g?.stations)?g.stations.map(s=>({name:String(s?.name||''), url:String(s?.url||''), logo:String(s?.logo||''), _status:s._status||null})):[]}));
 }
+function addGroup(){
+  collectStationsFromEditor();
+  stationsModel.push({name:'Neuer Ordner', stations:[]});
+  renderStationsEditor();
+}
 function statusHtml(st){
   if (!st || !st.url) return '<span class="station-status warn">keine URL</span>';
   if (!st._status) return '<span class="station-status">nicht geprüft</span>';
@@ -145,7 +150,7 @@ function renderStationsEditor(){
         <input value="${esc(g.name)}" placeholder="Gruppenname" data-field="group-name">
         <button type="button" data-action="add-station">+ Sender</button>
         <button type="button" data-action="check-group">Gruppe prüfen</button>
-        <button type="button" data-action="remove-group">Gruppe löschen</button>
+        <button type="button" data-action="remove-group">Ordner löschen</button>
       </div>
       ${(g.stations||[]).map((s,si)=>`
         <div class="station-row" data-si="${si}">
@@ -231,6 +236,7 @@ $('#stationsEditor').addEventListener('click', (ev)=>{
   stationsModel = normalizeStations(stationsModel);
   renderStationsEditor();
 });
+$('#addGroupBtn').addEventListener('click', addGroup);
 $('#addStationBtn').addEventListener('click', ()=>{ collectStationsFromEditor(); if(!stationsModel.length) stationsModel=[{name:'My Stations',stations:[]}]; stationsModel[0].stations.push({name:'',url:'',logo:'',_status:null}); renderStationsEditor(); });
 $('#saveStationsBtn').addEventListener('click', ()=>saveStations(collectStationsFromEditor()));
 $('#saveStationsRawBtn').addEventListener('click', ()=>saveStations(null));

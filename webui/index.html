@@ -92,10 +92,11 @@
     <section id="tab-admin" class="tab-panel">
       <div class="grid">
         <section class="card">
-          <h2 data-i18n="statusTitle">Status</h2>
+          <div class="section-head"><h2 data-i18n="statusTitle">Status</h2><div class="actions"><button type="button" id="rebootBtn" class="danger" data-i18n="rebootContainer">LXC/Container neu starten</button></div></div>
           <div id="statusSummary" class="muted" data-i18n="loading">Lade...</div>
           <div id="services" class="list"></div>
           <div id="ports" class="list"></div>
+          <pre id="rebootResult" class="result muted"></pre>
         </section>
 
         <section class="card">

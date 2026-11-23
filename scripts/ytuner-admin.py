@@ -762,6 +762,14 @@ class Handler(BaseHTTPRequestHandler):
             res = run_cmd(["systemctl", "restart", name], timeout=30)
             self._send_json(200 if res["ok"] else 500, {"ok": res["ok"], "result": res, "status": service_status(name)})
             return
+        if path == "/api/system/reboot":
+            if not ALLOW_SYSTEMCTL or shutil.which("systemctl") is None:
+                self._send_json(400, {"ok": False, "error": "systemctl unavailable"})
+                return
+            # respond before reboot; schedule so HTTP response can flush
+            self._send_json(202, {"ok": True, "message": "reboot scheduled"})
+            subprocess.Popen(["sh", "-lc", "sleep 2 && systemctl reboot"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return
         if path == "/api/tests/run":
             self._send_json(200, run_tests())
             return

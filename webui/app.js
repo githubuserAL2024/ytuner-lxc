@@ -4,6 +4,9 @@ const I18N = {
   de: {
     rbTitle:'Radio-Browser durchsuchen',
     rbTargetGroup:'Zielordner',
+    rebootContainer:'LXC/Container neu starten',
+    rebootConfirm:'Container wirklich neu starten?',
+    rebooting:'Neustart wird ausgelöst... Verbindung wird kurz unterbrochen.',
     rbHelp:'Suche im Radio-Browser und übernehme Sender direkt in "My Stations".',
     rbSearch:'Suchen',
     rbEnterQuery:'Suchbegriff eingeben.',
@@ -32,6 +35,9 @@ const I18N = {
   en: {
     rbTitle:'Search Radio-Browser',
     rbTargetGroup:'Target folder',
+    rebootContainer:'Reboot LXC/container',
+    rebootConfirm:'Really reboot the container?',
+    rebooting:'Reboot scheduled... connection will drop briefly.',
     rbHelp:'Search Radio-Browser and add stations directly to "My Stations".',
     rbSearch:'Search',
     rbEnterQuery:'Enter a search query.',
@@ -141,6 +147,17 @@ async function saveSources(){
     $('#sourcesResult').textContent = JSON.stringify(d, null, 2);
     await loadStatus();
   } catch(e){ $('#sourcesResult').textContent = JSON.stringify(e.data||{error:e.message}, null, 2); }
+}
+
+async function rebootContainer(){
+  if (!confirm(t('rebootConfirm'))) return;
+  $('#rebootResult').textContent = t('rebooting');
+  try {
+    const d = await api('/api/system/reboot', {method:'POST', body:'{}'});
+    $('#rebootResult').textContent = JSON.stringify(d, null, 2);
+  } catch(e){
+    $('#rebootResult').textContent = t('error') + ': ' + (e.data?.error||e.message);
+  }
 }
 
 /* ---- Status / Config ---- */
@@ -371,6 +388,7 @@ $('#reloadSourcesBtn').addEventListener('click', ()=>loadSources().catch(e=>$('#
 $('#saveSourcesBtn').addEventListener('click', saveSources);
 $('#rbSearchBtn').addEventListener('click', searchRadioBrowser);
 $('#rbQuery').addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); searchRadioBrowser(); } });
+$('#rebootBtn').addEventListener('click', rebootContainer);
 
 /* ---- Logs ---- */
 let currentLog='ytuner';

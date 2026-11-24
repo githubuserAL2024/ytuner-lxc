@@ -157,6 +157,35 @@ if [[ -f "$ADMIN_DEFAULT_SOURCE" && ! -f /etc/default/ytuner-admin ]]; then
   fi
 fi
 
+# Keep the AVR-facing station list in sync with the admin webui: YTuner only
+# reloads stations.ini when MyStationsAutoRefreshPeriod>0 (old installs shipped 0).
+migrate_mystations_autorefresh() {
+  local ini="$1"
+  [[ -f "$ini" ]] || return 0
+  if grep -Eq '^[[:space:]]*MyStationsAutoRefreshPeriod[[:space:]]*=[[:space:]]*[^0[:space:]]' "$ini"; then
+    log "MyStationsAutoRefreshPeriod already enabled in $ini"
+    return 0
+  fi
+  if grep -Eq '^[[:space:]]*MyStationsAutoRefreshPeriod[[:space:]]*=[[:space:]]*0[[:space:]]*$' "$ini"; then
+    log "Migrating $ini: MyStationsAutoRefreshPeriod 0 -> 1"
+    if [[ "$DRY_RUN" == "1" ]]; then
+      printf '+ sed -i MyStationsAutoRefreshPeriod 0->1 in %q\n' "$ini"
+    else
+      sed -i -E '/^[[:space:]]*MyStationsAutoRefreshPeriod[[:space:]]*=[[:space:]]*0[[:space:]]*$/s/=.*/=1/' "$ini"
+    fi
+  elif ! grep -Eq '^[[:space:]]*MyStationsAutoRefreshPeriod[[:space:]]*=' "$ini"; then
+    log "Adding MyStationsAutoRefreshPeriod=1 to $ini"
+    if [[ "$DRY_RUN" == "1" ]]; then
+      printf '+ add MyStationsAutoRefreshPeriod=1 to %q\n' "$ini"
+    elif grep -Eq '^\[MyStations\]' "$ini"; then
+      awk '/^\[MyStations\]/{print; print "MyStationsAutoRefreshPeriod=1"; next} {print}' "$ini" > "$ini.tmp" && mv "$ini.tmp" "$ini"
+    else
+      printf '\n[MyStations]\nMyStationsAutoRefreshPeriod=1\n' >> "$ini"
+    fi
+  fi
+}
+migrate_mystations_autorefresh "$INSTALL_DIR/ytuner.ini"
+
 if [[ "$NO_RESTART" == "0" ]] && command -v systemctl >/dev/null 2>&1; then
   run systemctl daemon-reload || true
   log "Restarting ytuner.service..."

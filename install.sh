@@ -269,8 +269,11 @@ Enable=1
 ; File name in config dir. Default = stations.ini
 MyStationsFile=stations.ini
 
-; Auto refresh period (minutes). 0 = no refresh ; Default = 0
-MyStationsAutoRefreshPeriod=0
+; Auto refresh period (minutes): YTuner re-checks the stations file
+; (mtime + CRC32) and reloads it into the AVR-facing list.
+; 0 = never reload: changes made via the admin webui then only take
+; effect after "systemctl restart ytuner". Keep >= 1 for webui editing.
+MyStationsAutoRefreshPeriod=1
 
 [Radiobrowser]
 ; Enables radio-browser.info support. 1-Yes 0-No ; Default = 1
@@ -383,6 +386,35 @@ SomaFM Groove Salad=https://ice1.somafm.com/groovesalad-128-mp3|https://somafm.c
 install_cfg "$INSTALL_DIR/ytuner.ini" "0644" "$YTUNER_INI"
 install_cfg "$INSTALL_DIR/config/avr.ini" "0644" "$AVR_INI"
 install_cfg "$INSTALL_DIR/config/stations.ini" "0644" "$STATIONS_INI"
+
+# Keep the AVR-facing station list in sync with the admin webui: YTuner only
+# reloads stations.ini when MyStationsAutoRefreshPeriod>0 (old installs shipped 0).
+migrate_mystations_autorefresh() {
+  local ini="$1"
+  [[ -f "$ini" ]] || return 0
+  if grep -Eq '^[[:space:]]*MyStationsAutoRefreshPeriod[[:space:]]*=[[:space:]]*[^0[:space:]]' "$ini"; then
+    log "MyStationsAutoRefreshPeriod already enabled in $ini"
+    return 0
+  fi
+  if grep -Eq '^[[:space:]]*MyStationsAutoRefreshPeriod[[:space:]]*=[[:space:]]*0[[:space:]]*$' "$ini"; then
+    log "Migrating $ini: MyStationsAutoRefreshPeriod 0 -> 1"
+    if [[ "$DRY_RUN" == "1" ]]; then
+      printf '+ sed -i MyStationsAutoRefreshPeriod 0->1 in %q\n' "$ini"
+    else
+      sed -i -E '/^[[:space:]]*MyStationsAutoRefreshPeriod[[:space:]]*=[[:space:]]*0[[:space:]]*$/s/=.*/=1/' "$ini"
+    fi
+  elif ! grep -Eq '^[[:space:]]*MyStationsAutoRefreshPeriod[[:space:]]*=' "$ini"; then
+    log "Adding MyStationsAutoRefreshPeriod=1 to $ini"
+    if [[ "$DRY_RUN" == "1" ]]; then
+      printf '+ add MyStationsAutoRefreshPeriod=1 to %q\n' "$ini"
+    elif grep -Eq '^\[MyStations\]' "$ini"; then
+      awk '/^\[MyStations\]/{print; print "MyStationsAutoRefreshPeriod=1"; next} {print}' "$ini" > "$ini.tmp" && mv "$ini.tmp" "$ini"
+    else
+      printf '\n[MyStations]\nMyStationsAutoRefreshPeriod=1\n' >> "$ini"
+    fi
+  fi
+}
+migrate_mystations_autorefresh "$INSTALL_DIR/ytuner.ini"
 
 # --- systemd service ----------------------------------------------------------
 SERVICE_UNIT='[Unit]

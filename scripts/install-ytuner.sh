@@ -209,6 +209,35 @@ copy_cfg "$CONFIG_SOURCE/ytuner.ini" "$INSTALL_DIR/ytuner.ini"
 copy_cfg "$CONFIG_SOURCE/avr.ini" "$INSTALL_DIR/config/avr.ini"
 copy_cfg "$CONFIG_SOURCE/stations.ini" "$INSTALL_DIR/config/stations.ini"
 
+# YTuner reloads stations.ini only when MyStationsAutoRefreshPeriod>0; old
+# templates shipped 0, which froze the AVR-facing list at service start.
+migrate_mystations_autorefresh() {
+  local ini="$1"
+  [[ -f "$ini" ]] || return 0
+  if grep -Eq '^[[:space:]]*MyStationsAutoRefreshPeriod[[:space:]]*=[[:space:]]*[^0[:space:]]' "$ini"; then
+    log "MyStationsAutoRefreshPeriod already enabled in $ini"
+    return 0
+  fi
+  if grep -Eq '^[[:space:]]*MyStationsAutoRefreshPeriod[[:space:]]*=[[:space:]]*0[[:space:]]*$' "$ini"; then
+    log "Migrating $ini: MyStationsAutoRefreshPeriod 0 -> 1"
+    if [[ "$DRY_RUN" == "1" ]]; then
+      printf '+ sed -i MyStationsAutoRefreshPeriod 0->1 in %q\n' "$ini"
+    else
+      sed -i -E '/^[[:space:]]*MyStationsAutoRefreshPeriod[[:space:]]*=[[:space:]]*0[[:space:]]*$/s/=.*/=1/' "$ini"
+    fi
+  elif ! grep -Eq '^[[:space:]]*MyStationsAutoRefreshPeriod[[:space:]]*=' "$ini"; then
+    log "Adding MyStationsAutoRefreshPeriod=1 to $ini"
+    if [[ "$DRY_RUN" == "1" ]]; then
+      printf '+ add MyStationsAutoRefreshPeriod=1 to %q\n' "$ini"
+    elif grep -Eq '^\[MyStations\]' "$ini"; then
+      awk '/^\[MyStations\]/{print; print "MyStationsAutoRefreshPeriod=1"; next} {print}' "$ini" > "$ini.tmp" && mv "$ini.tmp" "$ini"
+    else
+      printf '\n[MyStations]\nMyStationsAutoRefreshPeriod=1\n' >> "$ini"
+    fi
+  fi
+}
+migrate_mystations_autorefresh "$INSTALL_DIR/ytuner.ini"
+
 # If upstream ships extra default files (bookmark.xml etc.), copy them if not present.
 for extra in bookmark.xml; do
   src_extra="$(find "$BIN_DIR" -maxdepth 2 -type f -name "$extra" | head -n1 || true)"

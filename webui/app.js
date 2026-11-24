@@ -19,8 +19,9 @@ const I18N = {
     tabStations:'1. Radiosender pflegen', tabAdmin:'2. Administration / Tests',
     sourcesTitle:'YTuner-Quellen / Überbleibsel', sourcesHelp:'Steuert, welche Quellen der AVR im YTuner-Menü sieht. "Überbleibsel" kommen oft aus Radio-Browser/Bookmarks/alten Stations-Dateien oder vTuner-Kategorien.',
     reload:'Neu laden', saveSources:'Quellen speichern',
-    stationsTitle:'Senderliste / Ordnerstruktur (stations.ini)', stationsHelp:'Ordner (Gruppen) und Sender für "My Stations" pflegen. Nach dem Speichern ggf. YTuner neu starten.',
+    stationsTitle:'Senderliste / Ordnerstruktur (stations.ini)', stationsHelp:'Ordner (Gruppen) und Sender für "My Stations" pflegen. YTuner übernimmt gespeicherte Änderungen automatisch (MyStationsAutoRefreshPeriod) oder nach "YTuner neu starten".',
     addFolder:'+ Ordner', checkAll:'Alle prüfen', addStation:'+ Sender', save:'Speichern', rawEdit:'Raw stations.ini bearbeiten', saveRaw:'Raw speichern',
+    restartYtuner:'YTuner neu starten', restartingYtuner:'Starte YTuner neu...', reloadRestarted:'YTuner neu gestartet', reloadAuto:'Auto-Refresh aktiv', reloadManual:'Bitte YTuner manuell neu starten',
     statusTitle:'Status', loading:'Lade...', proxyTitle:'Stream-Proxy Einstellungen', restartProxy:'Proxy neustarten',
     configTitle:'YTuner Konfiguration (read-only Überblick)', testsTitle:'Autotest / Diagnose', runTests:'Tests ausführen',
     legendRed:'nicht bestanden/offen', legendYellow:'läuft', legendGreen:'bestanden',
@@ -50,8 +51,9 @@ const I18N = {
     tabStations:'1. Manage radio stations', tabAdmin:'2. Administration / Tests',
     sourcesTitle:'YTuner sources / leftovers', sourcesHelp:'Controls which sources appear in the AVR YTuner menu. “Leftovers” often come from Radio-Browser/Bookmarks/old station files or vTuner categories.',
     reload:'Reload', saveSources:'Save sources',
-    stationsTitle:'Station list / folder structure (stations.ini)', stationsHelp:'Manage folders (groups) and stations for "My Stations". After saving, restart YTuner if needed.',
+    stationsTitle:'Station list / folder structure (stations.ini)', stationsHelp:'Manage folders (groups) and stations for "My Stations". YTuner picks up saved changes automatically (MyStationsAutoRefreshPeriod) or after "Restart YTuner".',
     addFolder:'+ Folder', checkAll:'Check all', addStation:'+ Station', save:'Save', rawEdit:'Edit raw stations.ini', saveRaw:'Save raw',
+    restartYtuner:'Restart YTuner', restartingYtuner:'Restarting YTuner...', reloadRestarted:'YTuner restarted', reloadAuto:'Auto-refresh active', reloadManual:'Restart YTuner manually',
     statusTitle:'Status', loading:'Loading...', proxyTitle:'Stream proxy settings', restartProxy:'Restart proxy',
     configTitle:'YTuner configuration (read-only overview)', testsTitle:'Autotest / Diagnostics', runTests:'Run tests',
     legendRed:'failed/pending', legendYellow:'running', legendGreen:'passed',
@@ -144,7 +146,7 @@ async function saveSources(){
   $('#sourcesResult').textContent = t('saving');
   try {
     const d = await api('/api/config/ytuner-sources', {method:'POST', body:JSON.stringify(payload)});
-    $('#sourcesResult').textContent = JSON.stringify(d, null, 2);
+    $('#sourcesResult').textContent = (d.changed ? t('updated')+reloadInfoText(d.reload) : t('updated')) + '\n' + JSON.stringify(d, null, 2);
     await loadStatus();
   } catch(e){ $('#sourcesResult').textContent = JSON.stringify(e.data||{error:e.message}, null, 2); }
 }
@@ -183,6 +185,7 @@ function renderConfig(cfg){
   add('ytuner.dns_port', cfg.ytuner?.dns_port);
   add('ytuner.intercept_dns', cfg.ytuner?.intercept_dns);
   add('ytuner.rb_cache_type', cfg.ytuner?.rb_cache_type);
+  add('ytuner.mystations_auto_refresh_period', cfg.ytuner?.mystations_auto_refresh_period);
   add('avr.protocol', cfg.avr?.protocol);
   $('#configView').innerHTML = rows.join('');
 }
@@ -344,8 +347,24 @@ async function saveStations(groups){
     stationsModel = normalizeStations(d.groups||[]).map(g=>({...g, stations:g.stations.map(s=>({...s, _status:oldStatus.get(s.url)||null}))}));
     $('#stationsRaw').value = d.raw || '';
     renderStationsEditor();
-    $('#stationsSaveResult').textContent = t('saved')+': '+d.path;
+    $('#stationsSaveResult').textContent = t('saved')+': '+d.path + reloadInfoText(d.reload);
+    loadStatus().catch(()=>{});
   } catch(e){ $('#stationsSaveResult').textContent = 'Fehler: '+JSON.stringify(e.data||{error:e.message}); }
+}
+function reloadInfoText(r){
+  if (!r) return '';
+  if (r.restarted) return ' | '+t('reloadRestarted');
+  if (r.mode === 'auto-refresh') return ' | '+t('reloadAuto')+` (${r.auto_refresh_period} min)`;
+  if (r.mode === 'manual') return ' | '+t('reloadManual');
+  return '';
+}
+async function restartYtuner(){
+  $('#stationsSaveResult').textContent = t('restartingYtuner');
+  try {
+    const d = await api('/api/service/restart', {method:'POST', body:JSON.stringify({name:'ytuner'})});
+    $('#stationsSaveResult').textContent = d.ok ? t('reloadRestarted') : t('error')+': '+JSON.stringify(d.result||d);
+    await loadStatus();
+  } catch(e){ $('#stationsSaveResult').textContent = t('error')+': '+(e.data?.error||e.message); }
 }
 async function checkStation(gi, si){
   collectStationsFromEditor();
@@ -383,6 +402,7 @@ $('#addStationBtn').addEventListener('click', ()=>{ collectStationsFromEditor();
 $('#saveStationsBtn').addEventListener('click', ()=>saveStations(collectStationsFromEditor()));
 $('#saveStationsRawBtn').addEventListener('click', ()=>saveStations(null));
 $('#reloadStationsBtn').addEventListener('click', loadStations);
+$('#restartYtunerBtn').addEventListener('click', restartYtuner);
 $('#checkAllStationsBtn').addEventListener('click', checkAllStations);
 $('#reloadSourcesBtn').addEventListener('click', ()=>loadSources().catch(e=>$('#sourcesResult').textContent=e.message));
 $('#saveSourcesBtn').addEventListener('click', saveSources);

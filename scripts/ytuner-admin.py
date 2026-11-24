@@ -161,7 +161,7 @@ def service_status(name: str) -> dict:
         return {"name": name, "active": active["stdout"].strip() or "inactive", "enabled": "n/a", "detail": active}
     active = run_cmd(["systemctl", "is-active", name], timeout=10)
     enabled = run_cmd(["systemctl", "is-enabled", name], timeout=10)
-    show = run_cmd(["systemctl", "show", name, "--property=ActiveState,SubState,UnitFileState,MainPID,ExecMainStatus"], timeout=10)
+    show = run_cmd(["systemctl", "show", name, "--property=ActiveState,SubState,UnitFileState,MainPID,ExecMainStatus,ActiveEnterTimestamp"], timeout=10)
     props = {}
     for line in show["stdout"].splitlines():
         if "=" in line:
@@ -397,6 +397,7 @@ def collect_config() -> dict:
             "bookmark_enable": ini_get(ytuner, "Bookmark", "Enable", "1"),
             "mystations_enable": ini_get(ytuner, "MyStations", "Enable", "1"),
             "mystations_file": ini_get(ytuner, "MyStations", "MyStationsFile", "stations.ini"),
+            "mystations_auto_refresh_period": ini_get(ytuner, "MyStations", "MyStationsAutoRefreshPeriod", "0"),
             "message_level": ini_get(ytuner, "Configuration", "MessageInfoLevel", ""),
         },
         "avr": {
@@ -453,6 +454,7 @@ def get_ytuner_sources() -> dict:
         "bookmark_enable": ini_get(yt, "Bookmark", "Enable", "1"),
         "mystations_enable": ini_get(yt, "MyStations", "Enable", "1"),
         "mystations_file": ini_get(yt, "MyStations", "MyStationsFile", "stations.ini"),
+        "mystations_auto_refresh_period": ini_get(yt, "MyStations", "MyStationsAutoRefreshPeriod", "0"),
     }
     # detect possible leftover/custom station files in config dir
     files = []
@@ -472,9 +474,10 @@ def get_ytuner_sources() -> dict:
 
 
 def save_ytuner_sources(payload: dict) -> dict:
-    yt = read_text(YTUNER_INI)
-    if not yt and not YTUNER_INI.exists():
+    original = read_text(YTUNER_INI)
+    if not original and not YTUNER_INI.exists():
         raise ValueError(f"ytuner.ini not found: {YTUNER_INI}")
+    yt = original
     changed = {}
     if "radiobrowser_enable" in payload:
         changed["Radiobrowser.Enable"] = _bool01(payload["radiobrowser_enable"], "1")
@@ -491,10 +494,67 @@ def save_ytuner_sources(payload: dict) -> dict:
             raise ValueError("invalid mystations_file")
         changed["MyStations.MyStationsFile"] = mf
         yt = ini_set(yt, "MyStations", "MyStationsFile", mf)
-    if not changed:
-        return {"ok": True, "changed": False, "config": get_ytuner_sources()["config"]}
+    if not changed or yt == original:
+        return {"ok": True, "changed": False, "updates": changed, "config": get_ytuner_sources()["config"]}
     write_text_atomic(YTUNER_INI, yt)
     return {"ok": True, "changed": True, "updates": changed, "config": get_ytuner_sources()["config"]}
+
+
+def get_mystations_auto_refresh() -> int:
+    raw = ini_get(read_text(YTUNER_INI), "MyStations", "MyStationsAutoRefreshPeriod", "0").strip()
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return 0
+
+
+def ytuner_active_enter_ts() -> float | None:
+    st = service_status("ytuner")
+    ts = (st.get("props") or {}).get("ActiveEnterTimestamp", "").strip()
+    if not ts or ts == "n/a":
+        return None
+    import calendar
+    from datetime import datetime
+    try:
+        dt = datetime.strptime(ts, "%a %Y-%m-%d %H:%M:%S %Z")
+    except ValueError:
+        return None
+    return float(calendar.timegm(dt.timetuple()))
+
+
+def stations_freshness() -> dict:
+    """True if the YTuner process can serve the current stations.ini."""
+    period = get_mystations_auto_refresh()
+    mtime = STATIONS_INI.stat().st_mtime if STATIONS_INI.exists() else 0.0
+    started = ytuner_active_enter_ts()
+    detail = {
+        "auto_refresh_period": period,
+        "stations_mtime": int(mtime),
+        "ytuner_started": int(started) if started is not None else None,
+    }
+    if period > 0:
+        return {"fresh": True, "reason": f"auto-refresh reloads stations.ini every {period} min", **detail}
+    if started is not None and started >= mtime:
+        return {"fresh": True, "reason": "ytuner started after last stations.ini change", **detail}
+    return {"fresh": False, "reason": "stations.ini changed after ytuner start and auto-refresh is disabled; restart ytuner", **detail}
+
+
+def restart_ytuner(reason: str) -> dict:
+    if not ALLOW_SYSTEMCTL or shutil.which("systemctl") is None:
+        return {"propagated": False, "mode": "manual", "restarted": False, "reason": reason,
+                "hint": "restart ytuner manually or set MyStationsAutoRefreshPeriod>=1"}
+    res = run_cmd(["systemctl", "restart", "ytuner"], timeout=30)
+    return {"propagated": bool(res["ok"]), "mode": "restart", "restarted": bool(res["ok"]), "reason": reason, "detail": res}
+
+
+def propagate_stations_change() -> dict:
+    """Make YTuner pick up a saved stations.ini without disturbing playback
+    when possible: rely on MyStationsAutoRefreshPeriod if enabled, else restart."""
+    period = get_mystations_auto_refresh()
+    if period > 0:
+        return {"propagated": True, "mode": "auto-refresh", "restarted": False,
+                "auto_refresh_period": period, "reason": "saved stations.ini; ytuner reloads automatically"}
+    return restart_ytuner("saved stations.ini; auto-refresh disabled")
 
 
 def radiobrowser_search(query: str, limit: int = 20) -> dict:
@@ -569,6 +629,9 @@ def run_tests() -> dict:
 
     pyc = run_cmd(["python3", "-m", "py_compile", str(PROXY_SCRIPT)], timeout=20)
     add("python:proxy-compile", pyc["ok"], pyc)
+
+    fresh = stations_freshness()
+    add("stations:fresh", fresh["fresh"] or (not ALLOW_SYSTEMCTL), {**fresh, "strict": ALLOW_SYSTEMCTL})
 
     ok_count = sum(1 for r in results if r["ok"])
     return {"ok": ok_count == len(results), "total": len(results), "passed": ok_count, "failed": len(results) - ok_count, "results": results, "ts": int(time.time())}
@@ -727,6 +790,12 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/config/ytuner-sources":
             try:
                 res = save_ytuner_sources(payload)
+                if res.get("changed"):
+                    # Enable/MyStationsFile are read once at ytuner startup; auto-refresh
+                    # only reloads the file content, not these switches.
+                    res["reload"] = restart_ytuner("ytuner.ini source settings changed (startup-only values)")
+                else:
+                    res["reload"] = {"propagated": False, "mode": "none", "restarted": False, "reason": "no changes"}
                 self._send_json(200, res)
             except Exception as exc:  # noqa: BLE001
                 self._send_json(400, {"ok": False, "error": str(exc)})
@@ -740,14 +809,14 @@ class Handler(BaseHTTPRequestHandler):
                         raise ValueError("stations.ini too large")
                     write_text_atomic(STATIONS_INI, raw if raw.endswith("\n") else raw + "\n")
                     content = read_text(STATIONS_INI)
-                    self._send_json(200, {"ok": True, "saved": True, "path": str(STATIONS_INI), "groups": parse_stations_ini(content), "raw": content})
+                    self._send_json(200, {"ok": True, "saved": True, "path": str(STATIONS_INI), "groups": parse_stations_ini(content), "raw": content, "reload": propagate_stations_change()})
                     return
                 groups = payload.get("groups")
                 if not isinstance(groups, list):
                     raise ValueError("Expected 'groups' list or 'raw' string")
                 rendered = render_stations_ini(groups)
                 write_text_atomic(STATIONS_INI, rendered)
-                self._send_json(200, {"ok": True, "saved": True, "path": str(STATIONS_INI), "groups": parse_stations_ini(rendered), "raw": rendered})
+                self._send_json(200, {"ok": True, "saved": True, "path": str(STATIONS_INI), "groups": parse_stations_ini(rendered), "raw": rendered, "reload": propagate_stations_change()})
             except Exception as exc:  # noqa: BLE001
                 self._send_json(400, {"ok": False, "error": str(exc)})
             return

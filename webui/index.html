@@ -9,7 +9,7 @@
 <body>
   <header class="topbar">
     <div>
-      <h1>YTuner Admin <span class="version-tag">v0.5</span></h1>
+      <h1>YTuner Admin <span class="version-tag">v0.6</span></h1>
       <p class="muted" data-i18n="subtitle">Weboberfläche für YTuner, Stream-Proxy und Diagnose</p>
     </div>
     <div class="actions">
@@ -67,13 +67,14 @@
           <div class="section-head">
             <div>
               <h2 data-i18n="stationsTitle">Senderliste / Ordnerstruktur (stations.ini)</h2>
-              <p class="muted small" data-i18n="stationsHelp">Ordner (Gruppen) und Sender für "My Stations" pflegen. Nach dem Speichern liest YTuner die Datei je nach Einstellung neu ein (ggf. Service neu starten).</p>
+              <p class="muted small" data-i18n="stationsHelp">Ordner (Gruppen) und Sender für "My Stations" pflegen. YTuner übernimmt gespeicherte Änderungen automatisch (MyStationsAutoRefreshPeriod) oder nach "YTuner neu starten".</p>
             </div>
             <div class="actions">
               <button type="button" id="addGroupBtn" data-i18n="addFolder">+ Ordner</button>
               <button type="button" id="checkAllStationsBtn" data-i18n="checkAll">Alle prüfen</button>
               <button type="button" id="addStationBtn" data-i18n="addStation">+ Sender</button>
               <button type="button" id="reloadStationsBtn" data-i18n="reload">Neu laden</button>
+              <button type="button" id="restartYtunerBtn" data-i18n="restartYtuner">YTuner neu starten</button>
               <button type="button" id="saveStationsBtn" class="primary" data-i18n="save">Speichern</button>
             </div>
           </div>

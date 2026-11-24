@@ -279,7 +279,7 @@ Die Dateien im Repo unter `config/` sind **Templates**. Sie werden beim Erstinst
 
 - `IPAddress=default` / `ActAsHost=default` — für normale LXC-Setups passend
 - `MessageInfoLevel=1` — sinnvolles Basis-Logging
-- `MyStations.Enable=1`, `MyStationsFile=stations.ini`
+- `MyStations.Enable=1`, `MyStationsFile=stations.ini`, `MyStationsAutoRefreshPeriod=1` — YTuner übernimmt Änderungen an `stations.ini` (z. B. aus der WebUI) automatisch innerhalb von ~1 Minute; bei `0` wird die Datei nur beim Service-Start gelesen
 - `Radiobrowser.Enable=1`
 - `RBCacheType=catPermMemDB` — gute UX bei vorhandenem SQLite; benötigt etwas RAM
 - `WebServerPort=80`
@@ -311,6 +311,7 @@ Station Name=http://stream.url/example.mp3|http://logo.url/logo.png
 
 - Logo-URL ist optional.
 - Alternativ unterstützt YTuner auch `stations.yaml`/`.yml` (siehe Upstream-Doku). Template dieses Repos verwendet `stations.ini`.
+- Änderungen wirken erst, wenn YTuner die Datei neu liest: mit `MyStationsAutoRefreshPeriod>=1` (Template-Default `1`) automatisch innerhalb der Periode, sonst nur beim Service-Start. Die Admin-WebUI meldet nach dem Speichern den verwendeten Weg und bietet „YTuner neu starten" als Sofort-Reload.
 
 ### HTTPS-only Streams (Stream-Proxy)
 
@@ -383,8 +384,9 @@ sudo systemctl status ytuner-admin --no-pager
 | GET | `/api/status` | Status von Services, Ports, Konfigurationsüberblick |
 | GET | `/api/config` | Aktuelle Konfigurationswerte (read-only Überblick) |
 | GET | `/api/stations` | Liest `stations.ini` als Gruppen/Sender + Raw |
-| POST | `/api/stations` | Speichert `stations.ini` (`{"groups":[...]}` oder `{"raw":"..."}`) |
+| POST | `/api/stations` | Speichert `stations.ini` (`{"groups":[...]}` oder `{"raw":"..."}`) und übernimmt die Änderungen in YTuner (Auto-Refresh aktiv → kein Restart; sonst Restart von `ytuner`) |
 | GET | `/api/stations/check?url=...` | Prüft Erreichbarkeit/Status einer Stream-URL |
+| GET/POST | `/api/config/ytuner-sources` | Liest/sendet YTuner-Quell-Schalter; Speichern startet `ytuner` neu (Startup-only-Werte) |
 | POST | `/api/config/proxy` | Speichert Stream-Proxy-Env-Werte (`STREAM_PROXY_*`) |
 | POST | `/api/service/restart` | Neustart eines erlaubten Dienstes (`{"name":"ytuner-stream-proxy"}`) |
 | GET | `/api/logs?name=ytuner|proxy|admin&lines=200` | Log-Tail |
@@ -497,6 +499,7 @@ curl -I http://<YTUNER_IP>:8091/api/health
 | Senderlisten leer/gefiltert | Zu restriktive Filter in `avr.ini` | Filter in `/opt/ytuner/config/avr.ini` lockern, Service neustarten |
 | AVR kann browsen, aber Streams schlagen fehl | Netzwerk/Codec/HTTPS/AVR-spezifisches Verhalten | Log prüfen, `Protocol`/Cache/SSL-Einstellungen testen, Upstream-Issues zum AVR-Modell prüfen |
 | HTTPS-only Sender spielt nicht | AVR kann kein TLS; Stream braucht Proxy | Sender-URL über `http://<YTUNER_IP>:8090/stream?url=https://...` testen; Proxy-Logs prüfen |
+| Sender-Änderungen in WebUI sichtbar, aber nicht am AVR | YTuner hält die Senderliste im RAM; ohne `MyStationsAutoRefreshPeriod>=1` wird `stations.ini` nur beim Start gelesen | In WebUI „YTuner neu starten" oder `systemctl restart ytuner`; `MyStationsAutoRefreshPeriod=1` in `/opt/ytuner/ytuner.ini` setzen; Log-Check `/var/log/ytuner.log` (`Refreshing..`, `loaded N my stations`); am AVR-Menü neu öffnen (AVR kann Menü cachen) |
 | Nach Reboot kein Dienst | Service nicht enabled oder Container nicht gestartet | `systemctl is-enabled ytuner`, `pct config <CTID>` (`onboot`) prüfen |
 
 Weitere AVR-spezifische Schritte: [docs/AVR-SETUP.md](docs/AVR-SETUP.md).

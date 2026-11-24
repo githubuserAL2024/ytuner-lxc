@@ -181,6 +181,7 @@ Repo `config/` files are templates; copied on first install, kept unless `--forc
 
 - `IPAddress=default`, `ActAsHost=default`
 - `MyStations.Enable=1`, `Radiobrowser.Enable=1`, `Bookmark.Enable=1`
+- `MyStationsAutoRefreshPeriod=1` — YTuner re-reads `stations.ini` (e.g. saved from the web UI) automatically within ~1 minute; with `0` the file is only read at service start
 - `WebServerPort=80`, `DNSServer.Enable=1`, `DNSServerPort=53`
 - `InterceptDNs=*.vtuner.com,*.radiosetup.com,*.my-noxon.net,*.radiomarantz.com`
 - `DNSServers=8.8.8.8,9.9.9.9`
@@ -196,6 +197,8 @@ Station Name=http://stream.url/example.mp3|http://logo.url/logo.png
 ```
 
 Logo URL optional. YTuner also supports YAML; this repo uses `stations.ini`.
+
+Edits only reach the AVR after YTuner re-reads the file: automatically within `MyStationsAutoRefreshPeriod` minutes (template default `1`), or at service start when set to `0`. The admin web UI reports which path applies after saving and offers "Restart YTuner" for an immediate reload.
 
 ## Admin WebUI / API / Autotests
 
@@ -222,10 +225,10 @@ YTUNER_ADMIN_ALLOW_SYSTEMCTL=1   # allows restart/reboot via API
 | GET | `/api/health` | Admin healthcheck |
 | GET | `/api/status` | Services/ports/config overview |
 | GET | `/api/config` | Read-only config overview |
-| GET/POST | `/api/stations` | Read/save `stations.ini` |
+| GET/POST | `/api/stations` | Read/save `stations.ini`; saving propagates to YTuner (no restart when auto-refresh is on, otherwise restarts `ytuner`) |
 | GET | `/api/stations/check?url=...` | Check stream URL reachability |
 | GET | `/api/radiobrowser/search?q=...&limit=...` | Search Radio-Browser |
-| GET/POST | `/api/config/ytuner-sources` | Read/save YTuner source toggles |
+| GET/POST | `/api/config/ytuner-sources` | Read/save YTuner source toggles; saving restarts `ytuner` (startup-only values) |
 | POST | `/api/config/proxy` | Save proxy env values |
 | POST | `/api/service/restart` | Restart allowed service |
 | POST | `/api/system/reboot` | Reboot container/host (if allowed) |
@@ -281,6 +284,7 @@ curl -I http://<YTUNER_IP>:8091/api/health
 | AVR finds no internet radio | AVR DNS not set to YTuner IP | set AVR DNS to fixed YTuner IP |
 | Slow/empty station lists | DB build / low RAM / filters | increase LXC RAM to 1024MB; check `avr.ini` filters |
 | HTTPS-only station won't play | AVR cannot do TLS | use proxy URL `http://<YTUNER_IP>:8090/stream?url=https://...` |
+| Station edits visible in web UI but not on the AVR | YTuner keeps the station list in RAM; without `MyStationsAutoRefreshPeriod>=1` `stations.ini` is only read at startup | click "Restart YTuner" or `systemctl restart ytuner`; set `MyStationsAutoRefreshPeriod=1` in `/opt/ytuner/ytuner.ini`; check `/var/log/ytuner.log` (`Refreshing..`, `loaded N my stations`); reopen the menu on the AVR (it may cache) |
 | Admin API restart/reboot denied | `YTUNER_ADMIN_ALLOW_SYSTEMCTL=0` or no systemctl | set env and restart admin service |
 
 More AVR/network details: [docs/AVR-SETUP.en.md](docs/AVR-SETUP.en.md).
